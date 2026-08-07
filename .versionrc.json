@@ -1,0 +1,26 @@
+{
+  "header": "# Changelog\n\nAll notable changes to this project are documented here. Format follows\n[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows\n[Semantic Versioning](https://semver.org/) once there's a published API to\nversion against - starting at `0.1.0` for this first tracked release.\n\nReleases are cut with `npx standard-version` (config in `.versionrc.json`),\nwhich builds the sections below from [Conventional\nCommits](https://www.conventionalcommits.org/) - so a commit's `feat:` /\n`fix:` prefix is what puts it in this file. Note that below `1.0.0` a\n`feat:` bumps a patch, not a minor: pass `--release-as minor` when a\nrelease deserves one.\n",
+  "bumpFiles": [
+    {
+      "filename": "pyproject.toml",
+      "updater": "scripts/pyproject-updater.cjs"
+    }
+  ],
+  "packageFiles": [
+    {
+      "filename": "pyproject.toml",
+      "updater": "scripts/pyproject-updater.cjs"
+    }
+  ],
+  "types": [
+    { "type": "feat", "section": "Added" },
+    { "type": "fix", "section": "Fixed" },
+    { "type": "perf", "section": "Changed" },
+    { "type": "refactor", "section": "Changed" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "test", "hidden": true },
+    { "type": "chore", "hidden": true }
+  ],
+  "commitUrlFormat": "https://github.com/matanew1/ai-agent-platform/commit/{{hash}}",
+  "compareUrlFormat": "https://github.com/matanew1/ai-agent-platform/compare/{{previousTag}}...{{currentTag}}"
+}
