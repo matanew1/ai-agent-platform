@@ -1,0 +1,64 @@
+[project]
+name = "ai-agent-platform"
+version = "0.1.0"
+description = "Modular-monolith AI agent platform: FastAPI + LangGraph agent, RAG, and a local tool registry over MongoDB/Redis/Qdrant."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "motor>=3.6",
+    "redis>=5.1",
+    "qdrant-client>=1.12",
+    "langchain-ollama>=1.1",
+    "langchain-mistralai>=0.2",
+    "pypdf>=6.15.0",
+    "python-docx>=1.2.0",
+    "agent",
+    "rag",
+    "tool",
+]
+
+# `uv run app` -> runs the entry point below (see app/main.py:run).
+[project.scripts]
+app = "app.main:run"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+# Workspace members are separately installable packages consumed by the
+# root app via `tool.uv.sources` below, not published externally.
+[tool.uv.workspace]
+members = ["modules/*"]
+
+[tool.uv.sources]
+agent = { workspace = true }
+rag = { workspace = true }
+tool = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The root package itself only ships app/, infrastructure/, and shared/ -
+# module business logic lives in the workspace members under modules/*.
+[tool.hatch.build.targets.wheel]
+packages = ["app", "infrastructure", "shared"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
