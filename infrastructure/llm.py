@@ -37,6 +37,43 @@ class LLMError(PlatformError):
     """Raised when an LLM call fails."""
 
 
+def _require_content(text: str, model: str, done_reason: str | None = None) -> str:
+    """Reject an empty completion instead of passing it off as an answer.
+
+    A successful HTTP call that produced no visible text is a failure, not a
+    result - neither caller (the agent's tool-call decision, its final
+    answer) can do anything with ``""``, and returning it silently is how a
+    real bug hid here: a reasoning-capable model (qwen3, gpt-oss,
+    deepseek-r1, ...) with thinking enabled spends generated tokens on
+    reasoning *before* any visible output, so a ``max_tokens`` cap meant for
+    a short structured reply can be consumed entirely by that reasoning.
+    Ollama then returns ``done_reason="length"`` with empty content, the
+    tool-call step parses ``""`` into zero calls, and the agent confidently
+    answers "no tool results were available" - no error anywhere.
+
+    Args:
+        text: The completion text as returned by the provider.
+        model: Model name, for the error message.
+        done_reason: Provider's stop reason, if it reports one.
+            ``"length"`` means the token cap was hit.
+
+    Returns:
+        ``text`` unchanged, when it has content.
+
+    Raises:
+        LLMError: If ``text`` is empty or whitespace-only.
+    """
+    if text.strip():
+        return text
+    hint = (
+        " - the max_tokens cap was consumed by the model's reasoning tokens before it "
+        "produced any visible output; set OLLAMA_REASONING=false or raise the cap"
+        if done_reason == "length"
+        else ""
+    )
+    raise LLMError(f"{model!r} returned an empty completion (done_reason={done_reason!r}){hint}.")
+
+
 class OllamaProvider:
     """LLM provider backed by a local Ollama server.
 
@@ -88,8 +125,9 @@ class OllamaProvider:
             The model's response text.
 
         Raises:
-            LLMError: If the Ollama request fails, times out, or the model
-                isn't pulled locally.
+            LLMError: If the Ollama request fails, times out, the model
+                isn't pulled locally, or it returns an empty completion -
+                see ``_require_content``.
         """
         # Log lengths, not content - a prompt/response can carry sensitive
         # user data and doesn't belong in logs at any level.
@@ -119,7 +157,7 @@ class OllamaProvider:
         content = message.content
         result = content if isinstance(content, str) else str(content)
         logger.debug("Ollama generate: model=%r response_len=%d", self._model, len(result))
-        return result
+        return _require_content(result, self._model, message.response_metadata.get("done_reason"))
 
     async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
         """Generate a completion for a prompt, yielding it token-by-token.
@@ -131,17 +169,23 @@ class OllamaProvider:
             Successive text chunks that concatenate to the full response.
 
         Raises:
-            LLMError: If the Ollama request fails, times out, or the model
-                isn't pulled locally. Can surface after some chunks have
-                already been yielded, if the connection drops mid-stream -
-                the caller (``AgentService.run_stream``) has already sent
-                those to the client and can only stop the stream there, not
-                retroactively return a clean error response.
+            LLMError: If the Ollama request fails, times out, the model
+                isn't pulled locally, or the stream ends without a single
+                chunk of visible content (see ``_require_content``). Can
+                surface after some chunks have already been yielded, if the
+                connection drops mid-stream - the caller
+                (``AgentService.run_stream``) has already sent those to the
+                client and can only stop the stream there, not
+                retroactively return a clean error response. The empty-stream
+                case is not like that: nothing has been yielded yet, so it
+                still reaches the client as a clean error.
         """
         logger.debug("Ollama generate_stream: model=%r prompt_len=%d", self._model, len(prompt))
         chunk_count = 0
+        done_reason: str | None = None
         try:
             async for chunk in self._chat.astream(prompt):
+                done_reason = chunk.response_metadata.get("done_reason", done_reason)
                 content = chunk.content
                 if not content:
                     continue
@@ -150,6 +194,8 @@ class OllamaProvider:
         except Exception as exc:
             raise LLMError(f"Ollama streaming request to {self._model!r} failed: {exc}") from exc
         logger.debug("Ollama generate_stream: model=%r chunks=%d", self._model, chunk_count)
+        if chunk_count == 0:
+            _require_content("", self._model, done_reason)
 
 
 class MistralProvider:
@@ -205,7 +251,7 @@ class MistralProvider:
         content = message.content
         result = content if isinstance(content, str) else str(content)
         logger.debug("Mistral generate: model=%r response_len=%d", self._model, len(result))
-        return result
+        return _require_content(result, self._model, message.response_metadata.get("finish_reason"))
 
     async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
         """Generate a completion for a prompt, yielding it token-by-token.
@@ -217,14 +263,18 @@ class MistralProvider:
             Successive text chunks that concatenate to the full response.
 
         Raises:
-            LLMError: If the Mistral request fails. Can surface after some
-                chunks have already been yielded - see
-                ``OllamaProvider.generate_stream``'s docstring, same caveat.
+            LLMError: If the Mistral request fails, or the stream ends
+                without a single chunk of visible content. Can surface after
+                some chunks have already been yielded - see
+                ``OllamaProvider.generate_stream``'s docstring, same caveat
+                and same empty-stream handling.
         """
         logger.debug("Mistral generate_stream: model=%r prompt_len=%d", self._model, len(prompt))
         chunk_count = 0
+        finish_reason: str | None = None
         try:
             async for chunk in self._chat.astream(prompt):
+                finish_reason = chunk.response_metadata.get("finish_reason", finish_reason)
                 content = chunk.content
                 if not content:
                     continue
@@ -233,6 +283,8 @@ class MistralProvider:
         except Exception as exc:
             raise LLMError(f"Mistral streaming request to {self._model!r} failed: {exc}") from exc
         logger.debug("Mistral generate_stream: model=%r chunks=%d", self._model, chunk_count)
+        if chunk_count == 0:
+            _require_content("", self._model, finish_reason)
 
 
 class OllamaEmbedder:

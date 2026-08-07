@@ -20,6 +20,7 @@ dependencies = [
     "agent",
     "rag",
     "tool",
+    "python-dotenv>=1.0",
 ]
 
 # `uv run app` -> runs the entry point below (see app/main.py:run).

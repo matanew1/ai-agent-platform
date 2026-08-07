@@ -56,6 +56,15 @@ logger = logging.getLogger(__name__)
 # dozen tokens - capping them cuts generation time without touching answer
 # quality. generate_answer is deliberately left uncapped (None): it
 # produces the actual user-facing reply.
+#
+# The cap covers *generated* tokens, which on a reasoning-capable model
+# (qwen3, gpt-oss, deepseek-r1) includes the thinking tokens emitted before
+# any visible output - so "a few dozen tokens of JSON" can still blow a
+# 200-token budget and come back empty. Run those models with reasoning off
+# (OLLAMA_REASONING=false) for this to hold. It's no longer a silent
+# failure either way: infrastructure/llm.py's _require_content raises
+# instead of returning the empty string that used to parse into zero tool
+# calls.
 _TOOL_CALL_MAX_TOKENS = 200
 
 # Smalltalk/acknowledgement messages with no informational content - see
