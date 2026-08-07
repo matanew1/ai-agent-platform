@@ -40,7 +40,9 @@ process's lifetime - built once, never per-request; see
 implemented - a real LangGraph workflow ([`retrieve_context`
 || `execute_tools`] -> `generate_answer`, the first two in parallel) calling
 a real LLM, real retrieval/ingestion against a real Qdrant collection, and
-a real local tool registry (pdf/markdown extraction). All three are
+a real local tool registry (pdf/markdown extraction, plus a `fetch` tool
+adapted from the external Fetch MCP server - see
+[tool-conventions.md](.claude/rules/tool-conventions.md)). All three are
 verified against live services, not just unit-tested. The one remaining
 scaffold is `infrastructure/database.py`'s CRUD methods
 (`find_one`/`insert_one`/`update_one`, still `NotImplementedError`) -

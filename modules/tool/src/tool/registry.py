@@ -1,15 +1,16 @@
 """The tool registry: its data structure, and how tools get looked up and run.
 
-Local tools (declared with ``@mcp_tool``, see ``decorator.py``) sit behind
-one lookup/execution surface - the agent only ever sees this registry,
-never a local function directly. See ``.claude/rules/tool-conventions.md``.
+Local and external MCP tools share one lookup/execution surface.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
+
+from mcp import StdioServerParameters
 
 from shared.types import ToolDefinition, ToolResult
 
@@ -34,7 +35,7 @@ class RegisteredTool:
 class ToolRegistry:
     """Registry that satisfies the agent's ``agent.internal.ports.ToolRegistry`` port.
 
-    Holds every ``@mcp_tool``-declared local tool, keyed by name. Named the
+    Holds local and external MCP tools, keyed by name. Named the
     same as the port it implements - the two are distinguished by module
     path, not name: this is the concrete implementation,
     ``agent.internal.ports.ToolRegistry`` is the ``Protocol`` it
@@ -44,15 +45,56 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, RegisteredTool] = {}
 
-    def register(self, tool: RegisteredTool) -> None:
-        """Add a tool to the registry, replacing any existing tool with the
-        same name.
+    def register_local(self, definition: ToolDefinition, handler: ToolHandler) -> None:
+        """Register one in-process tool - see ``tool/tools/*.py``.
+
+        Plain functions, no decorator: a tool file just defines a
+        module-level ``DEFINITION`` and an async handler; this is the one
+        call that makes it agent-callable, called once per tool from
+        ``app/lifespan.py`` (e.g. ``registry.register_local(pdf.DEFINITION,
+        pdf.extract_pdf)``) - the same explicit, no-magic shape as
+        ``register_mcp`` below, just without the connection step a local
+        tool doesn't need.
 
         Args:
-            tool: Tool definition plus its execution handler.
+            definition: Name/description/parameters, as exposed to the agent.
+            handler: Async callable that executes the tool given its arguments.
         """
-        self._tools[tool.definition.name] = tool
-        logger.debug("Registered tool %r", tool.definition.name)
+        self._tools[definition.name] = RegisteredTool(definition=definition, handler=handler)
+        logger.debug("Registered tool %r", definition.name)
+
+    async def register_mcp(
+        self, server_params: StdioServerParameters, exit_stack: AsyncExitStack
+    ) -> None:
+        """Connect to an external MCP server and register every tool it
+        exposes into this registry.
+
+        ``McpServerAdapter`` (imported lazily - ``tool.mcp.adapter`` imports
+        this class, so importing it back at module level here would be a
+        circular import) does the actual connecting and adapting; this
+        registry does the registering, e.g.
+        ``registry.register_mcp(server_params, exit_stack)`` from
+        ``app/lifespan.py`` - see ``tool.mcp.config.load_servers`` for
+        where ``server_params`` comes from.
+
+        Args:
+            server_params: Which process to spawn and how (command, args,
+                env).
+            exit_stack: Holds the connection open past this call - see
+                ``McpServerAdapter.connect``'s docstring for why.
+        """
+        from tool.mcp.adapter import McpServerAdapter
+
+        adapter = await McpServerAdapter.connect(server_params, exit_stack)
+        tools = await adapter.list_tools()
+        for tool in tools:
+            self._tools[tool.definition.name] = tool
+        logger.info(
+            "Registered %d tool(s) from MCP server command=%r args=%r",
+            len(tools),
+            server_params.command,
+            server_params.args,
+        )
 
     def get_tools(self) -> list[ToolDefinition]:
         """List tools currently available to the agent."""

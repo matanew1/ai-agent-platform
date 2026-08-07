@@ -1,14 +1,10 @@
-"""Local, in-process tools, declared with ``@mcp_tool``.
+"""In-process tools implemented and run by this application.
 
-Importing this package runs each tool module's decorators below, which
-append every tool to ``tool.decorator._LOCAL_TOOLS``; call
-``tool.decorator.register_local_tools(registry)`` with a live
-registry to actually add them (see ``app/lifespan.py``). Add a new local
-tool by adding a new file here and importing it below - nothing else
-changes (open/closed: the registry and startup wiring don't know or care
-how many local tools exist).
+Each file here defines a module-level ``DEFINITION`` (``ToolDefinition``)
+and a plain async handler function - nothing registers itself. A tool
+becomes agent-callable only when something calls
+``ToolRegistry.register_local(DEFINITION, handler)`` - see
+``app/lifespan.py``, which does this once per tool at startup, the same
+explicit, no-magic pattern ``ToolRegistry.register_mcp`` uses for external
+MCP servers (see ``tool/mcp/``).
 """
-
-from tool.tools import markdown, pdf  # noqa: F401 - import triggers @mcp_tool registration
-
-__all__ = ["markdown", "pdf"]

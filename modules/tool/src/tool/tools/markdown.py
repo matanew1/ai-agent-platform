@@ -7,7 +7,7 @@ import logging
 import re
 from pathlib import Path
 
-from tool.decorator import mcp_tool
+from shared.types import ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,18 @@ _BLOCKQUOTE = re.compile(r"^>\s?", re.MULTILINE)
 _HORIZONTAL_RULE = re.compile(r"^([-*_])\1{2,}\s*$", re.MULTILINE)
 _BLANK_LINES = re.compile(r"\n{3,}")
 
+DEFINITION = ToolDefinition(
+    name="extract_markdown",
+    description="Extract plain text content from a Markdown file at a given filesystem path.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Path to the Markdown file."},
+        },
+        "required": ["path"],
+    },
+)
+
 
 def _strip_markdown(text: str) -> str:
     """Strip common Markdown syntax, leaving the readable text behind."""
@@ -40,17 +52,6 @@ def _strip_markdown(text: str) -> str:
     return text.strip()
 
 
-@mcp_tool(
-    name="extract_markdown",
-    description="Extract plain text content from a Markdown file at a given filesystem path.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "path": {"type": "string", "description": "Path to the Markdown file."},
-        },
-        "required": ["path"],
-    },
-)
 async def extract_markdown(path: str) -> dict[str, str]:
     """Extract plain text from a Markdown file.
 

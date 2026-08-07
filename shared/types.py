@@ -45,7 +45,7 @@ class Chunk(BaseModel):
 class ToolDefinition(BaseModel):
     """Description of a callable tool, as exposed to the agent.
 
-    Produced by ``mcp`` (local ``@mcp_tool``-decorated functions)
+    Produced by local tools or external MCP servers
     and consumed by ``agent`` when deciding which tool to call. Mirrors the
     shape an LLM tool-calling API expects.
 

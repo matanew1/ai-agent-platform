@@ -1,0 +1,68 @@
+# Every external MCP server this app connects to - one top-level key per
+# server, each with a `command` (required) and `args` (optional). Add a
+# new server by adding another key here; nothing else changes -
+# tool/mcp/config.py::load_servers() registers every entry in this file,
+# and app/lifespan.py registers every server load_servers() returns. See
+# .claude/rules/tool-conventions.md.
+#
+# `--with mcp==1.9.4` appears in every entry below, and that is not
+# copy-paste inertia: all four official servers tried here so far (fetch,
+# time, sqlite, git) are published against an older mcp SDK API than uvx
+# resolves by default, and every one of them crashes on startup without
+# the pin - `ImportError: cannot import name 'McpError'` for fetch/time,
+# `AttributeError: 'Server' object has no attribute 'list_tools'` for
+# sqlite/git. Assume a new server needs it too; check with a plain
+# `uvx <package> --help` first, which reproduces the crash outside this app.
+
+fetch:
+  # The official Fetch MCP server: fetches a URL and returns its content
+  # as text. Run via `uvx` (bundled with `uv`, already this project's
+  # toolchain) - no Node/npm dependency, unlike some other official MCP
+  # servers.
+  #
+  # --with mcp==1.9.4 pins the *subprocess's own* mcp SDK install, separate
+  # from this project's own (newer) mcp client dependency - mcp-server-fetch
+  # (as currently published on PyPI) breaks under uvx's default resolution
+  # because it imports `McpError`, a name a newer mcp release replaced with
+  # `MCPError`; confirmed by reproducing the failure with plain
+  # `uvx mcp-server-fetch --help`. Client and server only talk over
+  # stdio/JSON-RPC, so their mcp package versions don't need to match -
+  # only the subprocess's own install needs one new enough to have
+  # `McpError`.
+  command: uvx
+  args: ["--with", "mcp==1.9.4", "mcp-server-fetch"]
+  #
+  # Worth knowing, since it looks like a broken tool and isn't: this server
+  # defaults to `raw: false`, converting the page to markdown - and that
+  # conversion drops <head>, so the page <title> never reaches the agent.
+  # Asked for a title, the agent can only answer "the title could not be
+  # extracted". That default is kept on purpose: markdown is what makes the
+  # tool good at questions *about page content*. Measured on the same page
+  # (https://ynet.co.il), same max_length:
+  #
+  #   raw: false ->  5,136 chars, no title, 260 readable words
+  #   raw: true  ->  5,237 chars, title,      8 readable words
+  #
+  # Raw HTML spends the max_length budget on <head>/<script> boilerplate
+  # before reaching any prose. So: leave this alone, and just ask for raw
+  # on the turns that need markup - the agent passes `raw: true` itself
+  # when the request calls for it (verified: it returns the exact <title>).
+
+time:
+  # Wall-clock and timezone reasoning - the one dimension an LLM cannot
+  # fake, since it has no clock and its training cutoff is not "now".
+  # Exposes get_current_time and convert_time.
+  #
+  # No arguments, no filesystem, no network: it computes from the host
+  # clock and the tz database, so there is nothing here to lock down.
+  # --local-timezone can pin a default (e.g. Asia/Jerusalem) if the host's
+  # own zone isn't the one you want tools to assume; left off so it
+  # follows the machine.
+  command: uvx
+  args: ["--with", "mcp==1.9.4", "mcp-server-time"]
+
+# Two more servers were evaluated here and deliberately not enabled -
+# sqlite (structured data) and git (repo awareness). Both connect fine and
+# both answer real calls; the reasons they're off are measured, not
+# assumed. See .claude/rules/tool-conventions.md ("Servers evaluated and
+# not enabled") for the numbers and the exact args to turn either on.
