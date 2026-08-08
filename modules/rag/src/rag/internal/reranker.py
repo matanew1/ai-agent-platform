@@ -20,12 +20,17 @@ from shared.types import Chunk
 
 logger = logging.getLogger(__name__)
 
-# A ranking response is a JSON array of small integers - a few dozen
-# tokens covers even a large candidate set. Kept tight for the same
-# reason agent.internal.graph._TOOL_CALL_MAX_TOKENS is: a decision-only
-# call doesn't need room for prose, and a smaller cap means a faster
-# response.
-_RERANK_MAX_TOKENS = 100
+# A ranking response is a JSON array of every candidate index - it has to
+# scale with candidate count, not be a flat cap: top_k has no enforced
+# upper bound (RAGService.search's caller controls it), and candidate_k
+# grows with it (top_k * 4), so a wide-enough search can produce a ranking
+# array a flat 100-token cap would truncate before the closing bracket -
+# see _parse_ranking's bracket check, and the regression test for exactly
+# this. Kept as tight as the candidate count allows for the same reason
+# agent.internal.graph._TOOL_CALL_MAX_TOKENS is: a decision-only call
+# doesn't need room for prose, and a smaller cap means a faster response.
+_RERANK_BASE_TOKENS = 20
+_RERANK_TOKENS_PER_CANDIDATE = 6
 
 
 async def rerank_chunks(
@@ -59,8 +64,9 @@ async def rerank_chunks(
         return chunks
     passages = "\n".join(f"{index + 1}. {chunk.text}" for index, chunk in enumerate(chunks))
     prompt = RERANK_PROMPT_TEMPLATE.format(query=query, passages=passages)
+    max_tokens = _RERANK_BASE_TOKENS + len(chunks) * _RERANK_TOKENS_PER_CANDIDATE
     try:
-        raw = await llm.generate(prompt, max_tokens=_RERANK_MAX_TOKENS)
+        raw = await llm.generate(prompt, max_tokens=max_tokens)
     except Exception as exc:
         logger.warning("Reranking failed, keeping vector-search order: %s", exc)
         return chunks[:top_k]
@@ -84,6 +90,16 @@ def _parse_ranking(raw: str, count: int) -> list[int]:
     natural_order = list(range(count))
     start, end = text.find("["), text.rfind("]")
     if start == -1 or end == -1 or end < start:
+        # No closing bracket most often means the response got cut off by
+        # max_tokens before finishing the array (see _RERANK_BASE_TOKENS/
+        # _RERANK_TOKENS_PER_CANDIDATE) - log it the same as a JSON parse
+        # failure below, so a too-tight budget for a given candidate count
+        # is observable instead of silently degrading to no reranking.
+        logger.warning(
+            "Reranking response had no complete JSON array (len=%d) - "
+            "likely truncated by max_tokens",
+            len(raw),
+        )
         return natural_order
 
     try:
