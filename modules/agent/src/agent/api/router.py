@@ -11,6 +11,7 @@ every handler, not through an import of the ``app`` package.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, Request
@@ -34,12 +35,20 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
             ``app/lifespan.py``'s ``lifespan`` and attached to ``app.state``.
 
     Returns:
-        The agent's reply, tied to the same session id.
+        The agent's reply, tied to the same session id, plus this turn's
+        execution time, tools invoked, and chunks retrieved (see
+        ``ChatResponse``).
     """
     logger.debug("POST /chat session_id=%r", payload.session_id)
     agent_service: AgentService = request.app.state.agent_service
-    reply = await agent_service.run(session_id=payload.session_id, message=payload.message)
-    return ChatResponse(session_id=payload.session_id, message=reply)
+    result = await agent_service.run(session_id=payload.session_id, message=payload.message)
+    return ChatResponse(
+        session_id=payload.session_id,
+        message=result.answer,
+        execution_time_seconds=result.execution_time_seconds,
+        tools_invoked=result.tools_invoked,
+        chunks_retrieved=result.chunks_retrieved,
+    )
 
 
 @router.post("/chat/stream")
@@ -61,11 +70,25 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
             ``app/lifespan.py``'s ``lifespan`` and attached to ``app.state``.
 
     Returns:
-        A streaming plain-text response of the agent's reply.
+        A streaming plain-text response of the agent's reply. Carries
+        three response headers, known before the body starts (see
+        ``agent.service.AgentService.run_stream``): ``X-Tools-Invoked``
+        (a JSON array of tool names), ``X-Chunks-Retrieved`` (an
+        integer), and ``X-Prep-Time-Seconds`` (a float - time before the
+        answer itself started generating, not the whole turn; a client
+        wanting total turn time can just time the stream itself).
     """
     logger.debug("POST /chat/stream session_id=%r", payload.session_id)
     agent_service: AgentService = request.app.state.agent_service
+    metadata, stream = await agent_service.run_stream(
+        session_id=payload.session_id, message=payload.message
+    )
     return StreamingResponse(
-        agent_service.run_stream(session_id=payload.session_id, message=payload.message),
+        stream,
         media_type="text/plain",
+        headers={
+            "X-Tools-Invoked": json.dumps(metadata.tools_invoked),
+            "X-Chunks-Retrieved": str(metadata.chunks_retrieved),
+            "X-Prep-Time-Seconds": f"{metadata.prep_time_seconds:.3f}",
+        },
     )

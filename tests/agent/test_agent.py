@@ -136,9 +136,57 @@ def _make_service(
 async def test_run_returns_the_generated_answer() -> None:
     service, *_ = _make_service(llm=FakeLLMProvider(answer="42"))
 
-    answer = await service.run(session_id="s1", message="what is the answer?")
+    result = await service.run(session_id="s1", message="what is the answer?")
 
-    assert answer == "42"
+    assert result.answer == "42"
+
+
+async def test_run_reports_execution_time() -> None:
+    service, *_ = _make_service()
+
+    result = await service.run(session_id="s1", message="what is the answer?")
+
+    assert result.execution_time_seconds > 0
+
+
+async def test_run_reports_tools_invoked() -> None:
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=FakeToolRegistry())
+
+    # "echo" is the registered tool's name, so the input-mention heuristic
+    # lets this reach the LLM - see test_run_calls_the_tool_the_llm_requests.
+    result = await service.run(session_id="s1", message="echo x=1")
+
+    assert result.tools_invoked == ["echo"]
+
+
+async def test_run_reports_no_tools_invoked_when_none_were_called() -> None:
+    service, *_ = _make_service()  # default LLM requests no tools
+
+    result = await service.run(session_id="s1", message="just answer directly")
+
+    assert result.tools_invoked == []
+
+
+async def test_run_reports_chunks_retrieved() -> None:
+    retriever = FakeRetriever(
+        chunks=[Chunk(id="1", text="a", score=0.9), Chunk(id="2", text="b", score=0.8)]
+    )
+    service, *_ = _make_service(retriever=retriever)
+
+    result = await service.run(session_id="s1", message="what does this platform do?")
+
+    assert result.chunks_retrieved == 2
+
+
+async def test_run_reports_zero_chunks_when_retrieval_is_skipped() -> None:
+    retriever = FakeRetriever()
+    service, *_ = _make_service(retriever=retriever)
+
+    result = await service.run(session_id="s1", message="thanks!")  # smalltalk - skips retrieval
+
+    assert result.chunks_retrieved == 0
+    assert retriever.queries == []
 
 
 async def test_run_uses_retriever_for_context() -> None:
@@ -264,7 +312,8 @@ async def test_run_stream_serializes_concurrent_requests_on_the_same_session() -
     service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="ok"))
 
     async def consume(message: str) -> None:
-        async for _ in service.run_stream(session_id="s1", message=message):
+        _, stream = await service.run_stream(session_id="s1", message=message)
+        async for _ in stream:
             pass
 
     await asyncio.gather(consume("first"), consume("second"))
@@ -280,11 +329,40 @@ async def test_run_raises_agent_error_when_llm_returns_no_answer() -> None:
         await service.run(session_id="s1", message="hello")
 
 
+async def test_run_stream_releases_the_session_lock_if_prep_fails() -> None:
+    """Regression test for the AsyncExitStack cleanup path: run_stream's
+    lock is entered manually (not `async with`) because it has to span
+    past the method's own return - a failure during prep must still
+    release it, or a later call on the same session_id deadlocks forever.
+    """
+
+    class FailingRetriever:
+        async def search(self, query: str, top_k: int = 5) -> list[Chunk]:
+            raise RuntimeError("retrieval broke")
+
+    memory = FakeMemory()
+    service, *_ = _make_service(memory=memory, retriever=FailingRetriever())
+
+    # _retrieve_context wraps the retriever's failure as AgentError - see
+    # agent.internal.graph.
+    with pytest.raises(AgentError):
+        await service.run_stream(session_id="s1", message="a real question")
+
+    # If the lock leaked, this hangs forever instead of completing.
+    metadata, stream = await asyncio.wait_for(
+        service.run_stream(session_id="s1", message="thanks!"), timeout=1
+    )
+    async for _ in stream:
+        pass
+    assert metadata.tools_invoked == []
+
+
 async def test_run_stream_yields_the_answer_in_chunks_and_saves_it() -> None:
     memory = FakeMemory()
     service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="hello world"))
 
-    chunks = [chunk async for chunk in service.run_stream(session_id="s1", message="hi")]
+    _, stream = await service.run_stream(session_id="s1", message="hi")
+    chunks = [chunk async for chunk in stream]
 
     assert "".join(chunks) == "hello world"
     assert len(chunks) > 1  # actually streamed, not one big chunk
@@ -293,6 +371,22 @@ async def test_run_stream_yields_the_answer_in_chunks_and_saves_it() -> None:
         ("user", "hi"),
         ("assistant", "hello world"),
     ]
+
+
+async def test_run_stream_returns_metadata_before_the_stream_starts() -> None:
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}}, answer="ok")
+    retriever = FakeRetriever(chunks=[Chunk(id="1", text="a", score=0.9)])
+    service, *_ = _make_service(llm=llm, retriever=retriever, tool_registry=FakeToolRegistry())
+
+    # "echo" mentioned so the tool-call heuristic reaches the LLM, same as
+    # test_run_calls_the_tool_the_llm_requests.
+    metadata, stream = await service.run_stream(session_id="s1", message="echo x=1")
+
+    assert metadata.tools_invoked == ["echo"]
+    assert metadata.chunks_retrieved == 1
+    assert metadata.prep_time_seconds > 0
+    async for _ in stream:  # drain so the lock releases before the test ends
+        pass
 
 
 async def test_run_stream_raises_agent_error_when_the_stream_fails() -> None:
@@ -305,5 +399,6 @@ async def test_run_stream_raises_agent_error_when_the_stream_fails() -> None:
     service, *_ = _make_service(llm=BrokenStreamLLMProvider())
 
     with pytest.raises(AgentError):
-        async for _ in service.run_stream(session_id="s1", message="hello"):
+        _, stream = await service.run_stream(session_id="s1", message="hello")
+        async for _ in stream:
             pass
