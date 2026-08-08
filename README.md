@@ -158,6 +158,15 @@ Authentication is intentionally disabled for now. `owner_id` is therefore a
 required caller-provided development scope, **not a security boundary**. Do
 not expose these routes publicly until real authentication is restored.
 
+### Private admin/test APIs
+
+Swagger UI also shows raw workflow and retrieval diagnostics under the clearly
+marked `[ADMIN ONLY] Agent` and `[ADMIN ONLY] RAG` sections:
+`/admin/agent/chat`, `/admin/agent/chat/stream`, `/admin/rag/documents`,
+`/admin/rag/documents/file`, and `/admin/rag/search`. These are for local
+testing only. The label is not access control—authentication is currently
+disabled, so do not expose the server publicly.
+
 ```bash
 # Create a configurable agent.
 curl -X POST http://localhost:8000/agents \

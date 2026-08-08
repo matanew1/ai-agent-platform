@@ -16,10 +16,12 @@ import logging
 import os
 
 import uvicorn
+from agent.api.router import router as admin_agent_router
 from agent.internal.graph import AgentError
 from agents.api.router import router as agents_router
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from rag.api.router import router as admin_rag_router
 from tool.api.router import router as tool_router
 
 from app.errors import handle_agent_error, handle_not_implemented, handle_platform_error
@@ -45,12 +47,27 @@ configure_logging()
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="ai-agent-platform", lifespan=lifespan)
+app = FastAPI(
+    title="ai-agent-platform",
+    lifespan=lifespan,
+    openapi_tags=[
+        {
+            "name": "[ADMIN ONLY] Agent",
+            "description": "Private core-agent diagnostics. No authorization is enforced yet.",
+        },
+        {
+            "name": "[ADMIN ONLY] RAG",
+            "description": "Private raw-retrieval diagnostics. No authorization is enforced yet.",
+        },
+    ],
+)
 app.add_exception_handler(AgentError, handle_agent_error)
 app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
 app.include_router(health_router)
 app.include_router(agents_router)
+app.include_router(admin_agent_router)
+app.include_router(admin_rag_router)
 app.include_router(tool_router)
 
 logger.debug("ASGI app assembled: %d route(s) registered", len(app.routes))
