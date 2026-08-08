@@ -12,6 +12,23 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.3.0](https://github.com/matanew1/ai-agent-platform/compare/v0.2.0...v0.3.0) (2026-08-08)
+
+
+### Fixed
+
+* **rag:** make chunk_text honest about overlap, fences, and tiny chunks ([391c1e2](https://github.com/matanew1/ai-agent-platform/commit/391c1e27ef00fae907d51c1ce942a6b04e33c85e))
+
+
+### Documentation
+
+* **tool:** record get_current_time's bare-phrasing selection limit ([9381346](https://github.com/matanew1/ai-agent-platform/commit/9381346a8c6a85853855bb57fda5feeeb9822307))
+
+
+### Added
+
+* **logging:** colorize dev logs and validate LOG_LEVEL/LOG_COLOR ([a3d4170](https://github.com/matanew1/ai-agent-platform/commit/a3d4170a739efdf6d0d93e62111c72df4c00fa3f))
+
 ## [0.2.0](https://github.com/matanew1/ai-agent-platform/compare/v0.1.0...v0.2.0) (2026-08-07)
 
 
