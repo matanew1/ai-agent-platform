@@ -95,6 +95,15 @@ working - this command's job is landing them, not writing them. If
      change is a real new capability, not just internal cleanup -
      matches what this repo has actually done at each release so far.
    - Run it for real: `npx --yes standard-version [--release-as minor]`.
+   - `uv.lock` carries its own copy of the version (a
+     `[[package]] name = "ai-agent-platform"` self-reference) that
+     `standard-version` doesn't know to touch - any `uv run`/`uv sync`
+     after the bump regenerates it as a trailing, easy-to-miss diff. Sync
+     it into the *same* release commit now, before pushing: run
+     `!uv sync` (or any `uv run ...`), then `!git status --short uv.lock`
+     - if it shows a diff, `git add uv.lock && git commit --amend --no-edit`,
+     then `git tag -f v<version>` to move the tag onto the amended commit
+     (amending changes the commit hash the tag pointed to).
    - `git push --follow-tags origin main`.
    - `.versionrc.json` already points the version bump at `pyproject.toml`
      (via `scripts/pyproject-updater.cjs` - there's no `package.json` in
@@ -108,5 +117,9 @@ working - this command's job is landing them, not writing them. If
    - `!uv run ruff check .`
    - `!uv run pytest -q`
    - Confirm the version: `!grep "^version" pyproject.toml`
+   - `!git status --short` - must be empty. If `uv.lock` shows up here,
+     step 7's sync was missed or a command above regenerated it again;
+     commit and push it before calling this done, don't leave a trailing
+     diff for the next session to find.
    - Report the PR URL, the merge commit, the new version tag, and the
      test count - state what was actually verified, not just "done."
