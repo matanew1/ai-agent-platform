@@ -167,6 +167,33 @@ This does mean the module depends on both the `mcp` SDK (see "Ownership"
 above for why that no longer collides with this module's own name) and
 `pyyaml` again.
 
+`get_current_time`'s `timezone` argument is `required` in its schema, with
+no schema-level `default` - only a prose instruction in the parameter's own
+`description` ("Use 'Asia/Jerusalem' as local timezone if no timezone
+provided by the user"). A bare "what is the current time?", with no
+timezone anywhere in the message, reliably (0/4, repeated) gets `[]` -
+`qwen3:8b` declines the tool rather than reasoning its way to that
+described default under `TOOL_CALL_PROMPT_TEMPLATE`'s constraints
+(`_TOOL_CALL_MAX_TOKENS=200`, `reasoning=False`, "respond with ONLY a JSON
+array" - all three deliberate, for decision latency). Give the model
+either a timezone (`"...current time in Tokyo?"`) or an explicit nudge
+(`"...use your time tool"`) and it's 4/4 reliable - confirmed by removing
+those constraints for one diagnostic call (unconstrained max_tokens, told
+to reason first): it reasons through the same instruction correctly and
+calls the tool with `Asia/Jerusalem`, every time. So the model can follow
+the instruction; the terse decision prompt just doesn't give it room to.
+
+One general prompt change was tried and rejected: a line telling the
+model to use a schema-described default rather than skip the tool for a
+missing argument. Measured against the same phrasing sweep, it left the
+bare-phrasing case at 0/4 and dragged the reliable
+`"...use your time tool"` phrasing down to 2/4 - a regression with no
+offsetting gain, so nothing shipped. `TOOL_CALL_PROMPT_TEMPLATE` is
+unchanged. This is the same shape of finding as sqlite below: a
+capability that's reachable at the protocol level but not reliably
+*selected*, better measured and documented than chased with prompt
+tweaks that regress a working case.
+
 ## Servers evaluated and not enabled
 
 Two more official servers were wired up, connected to, and called for
