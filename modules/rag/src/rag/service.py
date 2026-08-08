@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import logging
 
-from rag.internal.ports import Embedder, VectorStore
+from rag.internal.ports import Embedder, LLMProvider, VectorStore
+from rag.internal.reranker import rerank_chunks
 from shared.text import chunk_text
 from shared.types import Chunk
 
 logger = logging.getLogger(__name__)
+
+# How much wider a candidate set to pull from the vector store before
+# reranking cuts it down to top_k - reranking can only reorder what it's
+# given, so it needs room to promote a result vector search ranked lower.
+# max() with a floor keeps a small top_k (e.g. 1) from starving the
+# reranker of anything to actually choose between.
+_RERANK_CANDIDATE_MULTIPLIER = 4
+_MIN_RERANK_CANDIDATES = 10
 
 
 class RAGService:
@@ -17,11 +26,20 @@ class RAGService:
     Args:
         vector_store: Vector store implementation (see
             ``rag.internal.ports.VectorStore``).
+        embedder: Turns text into vectors for indexing and querying.
+        llm: Optional - when set, ``search`` reranks a wider vector-search
+            candidate set with it before returning ``top_k`` (see
+            ``rag.internal.reranker.rerank_chunks``). ``None`` (the
+            default) skips reranking entirely: ``search`` costs exactly
+            one embedding call, same as before this existed.
     """
 
-    def __init__(self, vector_store: VectorStore, embedder: Embedder) -> None:
+    def __init__(
+        self, vector_store: VectorStore, embedder: Embedder, llm: LLMProvider | None = None
+    ) -> None:
         self._vector_store = vector_store
         self._embedder = embedder
+        self._llm = llm
 
     async def ingest_document(
         self,
@@ -56,18 +74,33 @@ class RAGService:
         await self._vector_store.upsert(chunks, embeddings)
         return len(chunks)
 
-    async def search(self, query: str, top_k: int = 5) -> list[Chunk]:
+    async def search(self, query: str, top_k: int = 5, rerank: bool = True) -> list[Chunk]:
         """Search for chunks relevant to a query.
 
         Args:
             query: Natural-language query.
             top_k: Maximum number of chunks to return.
+            rerank: Whether to rerank the vector-search candidates with the
+                configured ``llm`` before returning ``top_k`` of them - a
+                per-call opt-out for when plain vector-search speed matters
+                more than the accuracy reranking adds (see
+                ``rag.internal.reranker`` for the measured trade-off).
+                Ignored (no-ops to plain vector search) when no ``llm`` was
+                configured in the first place - this never raises just
+                because reranking isn't available to turn on.
 
         Returns:
-            Relevant chunks, most relevant first.
+            Relevant chunks, most relevant first - by vector similarity if
+            reranking is off or unavailable, by reranked LLM judgment
+            otherwise.
         """
         # Length, not content - a query can carry sensitive user data (see
         # infrastructure/llm.py's generate() for the same policy).
-        logger.debug("RAGService.search query_len=%d top_k=%d", len(query), top_k)
+        logger.debug("RAGService.search query_len=%d top_k=%d rerank=%s", len(query), top_k, rerank)
         embedding = await self._embedder.embed(query)
-        return await self._vector_store.search(embedding, top_k)
+        if self._llm is None or not rerank:
+            return await self._vector_store.search(embedding, top_k)
+
+        candidate_k = max(top_k * _RERANK_CANDIDATE_MULTIPLIER, _MIN_RERANK_CANDIDATES)
+        candidates = await self._vector_store.search(embedding, candidate_k)
+        return await rerank_chunks(self._llm, query, candidates, top_k)

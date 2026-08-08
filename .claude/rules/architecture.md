@@ -38,11 +38,16 @@ modules/                    — uv workspace members, one installable package ea
         service.py             — the module's one public entry point (RAGService)
         api/                    — HTTP surface: router.py (POST /rag/documents,
                                    /documents/file, /search), schemas.py
-        internal/               — ports.py (Embedder, VectorStore); errors.py
-                                   (RagError) - ingestion/retrieval logic
-                                   itself lives in service.py, thin enough
-                                   (chunk -> embed -> upsert) that it never
-                                   needed its own internal/ file
+        internal/               — ports.py (Embedder, VectorStore,
+                                   LLMProvider); errors.py (RagError);
+                                   prompts.py (RERANK_PROMPT_TEMPLATE);
+                                   reranker.py (rerank_chunks - see
+                                   "Reranking" below). Ingestion stays in
+                                   service.py, thin enough (chunk -> embed
+                                   -> upsert) that it never needed its own
+                                   file; reranking earned one once its
+                                   prompt-building/parsing/fallback logic
+                                   was more than "a few lines"
     tool/src/tool/             — tool registry. No internal/ here (see
                                   "Module-internal layout" below) - registry.py
                                   is the one root file, tool sources split
@@ -99,6 +104,40 @@ additionally verified against live services, not just unit-tested.
 `NotImplementedError` scaffold - nothing in the current request path calls
 them; `connect`/`close` are real, as are `infrastructure/{redis,qdrant,llm}.py`
 in full.
+
+**Reranking:** `RAGService.search` optionally reranks a wider
+vector-search candidate set with an LLM before returning `top_k` -
+`rag.internal.reranker.rerank_chunks`, prompted from
+`rag.internal.prompts.RERANK_PROMPT_TEMPLATE`. Vector similarity alone is
+a coarse signal (the query and passage embeddings are computed
+independently, never seen together); an LLM reading both at once catches
+cases a bi-encoder gets fooled by. Measured, not assumed: on three
+adversarial queries built around lexical-decoy passages (a cancellation
+*fee* policy that shares vocabulary with "how do I cancel my
+subscription?" without answering it, and similarly for a VPN and a
+camera-crash query), plain vector search picked the wrong top-1 result
+2 times out of 3; reranking corrected both, landing 3/3, for ~0.8s of
+added latency per search. That's a real, worthwhile trade - unlike the
+`sqlite`/`git` servers in `tool-conventions.md`, which measured to no net
+benefit - so it defaults on (`RAG_RERANK=true` in `app/lifespan.py`,
+reusing the same `llm` instance already built for `AgentService` - no
+second provider, no second config).
+
+Two levers control it, at different scopes:
+- `RAG_RERANK` (env var, default `true`) - whether the process wires an
+  `llm` into `RAGService` at all. `false` means reranking is never even
+  attempted, at zero latency cost, useful for a deployment where
+  vector-search speed matters more than the accuracy this adds.
+- `rerank` (a `RAGService.search`/`POST /rag/search` parameter, default
+  `true`) - a per-call opt-out once the capability exists. Requesting
+  `rerank=True` when the process has no `llm` configured never raises -
+  it silently no-ops to plain vector-search order, the same
+  fail-soft contract `tool.registry.ToolRegistry.call_tool` holds for
+  tool execution.
+
+`.env.example` should have a `RAG_RERANK` line alongside the LLM
+provider settings it reuses - not added yet, see the file's own note if
+this comment is still here when you're reading it.
 
 Each module owns its own domain models, service layer, and the interfaces
 (ports) it depends on. `infrastructure/*` provides concrete adapters that

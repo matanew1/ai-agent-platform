@@ -57,5 +57,7 @@ async def ingest_file(
 async def search(payload: SearchRequest, request: Request) -> SearchResponse:
     """Find indexed chunks relevant to a query."""
     rag_service: RAGService = request.app.state.rag_service
-    chunks = await rag_service.search(query=payload.query, top_k=payload.top_k)
+    chunks = await rag_service.search(
+        query=payload.query, top_k=payload.top_k, rerank=payload.rerank
+    )
     return SearchResponse(chunks=chunks)

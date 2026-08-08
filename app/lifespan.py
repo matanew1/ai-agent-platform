@@ -156,7 +156,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # registry built above through their constructors. AgentService.__init__
         # compiles the LangGraph workflow exactly once, right here - never
         # per-request (see module docstring).
-        rag_service = RAGService(vector_store=vector_store, embedder=embedder)
+        # RAG_RERANK reuses the same llm instance built above for AgentService -
+        # no second provider, no second config. RAGService treats llm=None as
+        # "don't rerank", so this line is the only thing the toggle touches.
+        # Defaults on: measured 1/3 -> 3/3 top-1 accuracy on adversarial
+        # queries (lexical-decoy passages that outscore the actual answer
+        # on raw embedding similarity) for ~0.8s added latency per search -
+        # see .claude/rules/architecture.md's "Reranking" section.
+        rerank_enabled = os.getenv("RAG_RERANK", "true").strip().lower() == "true"
+        rag_service = RAGService(
+            vector_store=vector_store, embedder=embedder, llm=llm if rerank_enabled else None
+        )
         agent_service = AgentService(
             llm=llm,
             retriever=rag_service,

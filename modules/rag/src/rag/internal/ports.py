@@ -19,6 +19,32 @@ class Embedder(Protocol):
         ...
 
 
+class LLMProvider(Protocol):
+    """Generates text completions - used here to rerank retrieved chunks.
+
+    A narrow duplicate of ``agent.internal.ports.LLMProvider``'s
+    ``generate`` shape (``rag`` can't import ``agent``'s internal port -
+    see ``.claude/rules/architecture.md``'s "Module-internal layout").
+    ``infrastructure.llm.OllamaProvider``/``MistralProvider`` - the same
+    instance built once in ``app/lifespan.py`` for ``AgentService`` -
+    structurally satisfy this too, without changing shape or adding a
+    method: only ``generate`` is needed here, so only ``generate`` is
+    declared (``generate_stream`` is agent's alone to need).
+    """
+
+    async def generate(self, prompt: str, max_tokens: int | None = None) -> str:
+        """Generate a completion for a prompt.
+
+        Args:
+            prompt: Fully-rendered prompt text.
+            max_tokens: Cap on the number of tokens to generate.
+
+        Returns:
+            The model's response text.
+        """
+        ...
+
+
 class VectorStore(Protocol):
     """A vector store capable of similarity search and indexing."""
 
