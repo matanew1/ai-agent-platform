@@ -125,7 +125,9 @@ class AgentService:
             SessionCheckpoint(session_id=session_id, history=new_history)
         )
 
-    async def run(self, session_id: str, message: str) -> AgentTurnResult:
+    async def run(
+        self, session_id: str, message: str, tools: list[str] | None = None
+    ) -> AgentTurnResult:
         """Run one turn and save it to the session history.
 
         The whole load -> run workflow -> save sequence runs under
@@ -136,13 +138,23 @@ class AgentService:
         contend with each other's lock, so this doesn't serialize
         unrelated traffic. Timed from here, so the lock wait counts too -
         see ``AgentTurnResult.execution_time_seconds``.
+
+        Args:
+            session_id: Conversation/session identifier.
+            message: The user's message.
+            tools: Restrict ``execute_tools`` to these tool names for this
+                turn. ``None`` or empty (the default) leaves every
+                registered tool available - see
+                ``agent.internal.graph.AgentState.allowed_tools``.
         """
         start = time.monotonic()
         async with self._memory.session_lock(session_id):
             history = await self._load_history(session_id)
 
             result = await self._graph.ainvoke(
-                AgentState(session_id=session_id, input=message, history=history)
+                AgentState(
+                    session_id=session_id, input=message, history=history, allowed_tools=tools or []
+                )
             )
             answer = result.get("answer") if isinstance(result, dict) else None
             if not answer:
@@ -158,9 +170,16 @@ class AgentService:
         )
 
     async def run_stream(
-        self, session_id: str, message: str
+        self, session_id: str, message: str, tools: list[str] | None = None
     ) -> tuple[ChatStreamMetadata, AsyncIterator[str]]:
         """Run one turn, returning metadata immediately and the answer as a stream.
+
+        Args:
+            session_id: Conversation/session identifier.
+            message: The user's message.
+            tools: Same meaning as ``run``'s ``tools`` - restricts
+                ``execute_tools`` to these names for this turn, or leaves
+                every registered tool available if ``None``/empty.
 
         Split into two return values - rather than a single async
         generator, which is what this was before ``ChatStreamMetadata``
@@ -206,7 +225,9 @@ class AgentService:
         try:
             history = await self._load_history(session_id)
             prefix_result = await self._prefix_graph.ainvoke(
-                AgentState(session_id=session_id, input=message, history=history)
+                AgentState(
+                    session_id=session_id, input=message, history=history, allowed_tools=tools or []
+                )
             )
         except BaseException:
             # Broad on purpose (not just Exception) - this must run on
