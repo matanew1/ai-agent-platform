@@ -12,6 +12,14 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.5.0](https://github.com/matanew1/ai-agent-platform/compare/v0.4.0...v0.5.0) (2026-08-08)
+
+
+### Added
+
+* **agent:** let /chat restrict which tools the agent may use ([bc5d851](https://github.com/matanew1/ai-agent-platform/commit/bc5d851010084c160d60a3285540b3080db51e39))
+* **tool:** enable the duckduckgo MCP server for web search ([511a9c1](https://github.com/matanew1/ai-agent-platform/commit/511a9c1652c1cae569e3d1f628aa12e7d0a4fbcc))
+
 ## [0.4.0](https://github.com/matanew1/ai-agent-platform/compare/v0.3.0...v0.4.0) (2026-08-08)
 
 
