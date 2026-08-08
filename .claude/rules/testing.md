@@ -70,11 +70,10 @@ speculatively before there's a real test to put in it.
   for a real bug (an empty completion being returned as if it were an
   answer, silently dropping every tool call) - the provider classes
   wrapped around it still need the live-service test described above.
-  `database.py`'s CRUD methods
-  (`find_one`/`insert_one`/`update_one`) are still `NotImplementedError`
-  stubs (see the file's `TODO`s); there's nothing to test there yet -
-  `connect`/`close` are real but have no dedicated test either, same gap
-  as the other adapters.
+  `database.py`'s CRUD methods and its startup ping are implemented. Unit
+  tests cover the adapter's startup/error behavior with a fake Motor client;
+  a live MongoDB integration test remains an opt-in future improvement,
+  alongside the other infrastructure adapters.
 
 ## Mocking strategy
 

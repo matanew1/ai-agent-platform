@@ -2,22 +2,22 @@
 
 A modular-monolith AI agent platform: FastAPI + LangGraph agent orchestration,
 RAG retrieval, and a local tool registry, backed by MongoDB, Redis, and Qdrant.
+The public API is the customizable `agents` module. The singular `agent` and
+`rag` modules are private workflow/retrieval implementations used by it and by
+their tests.
 
 **`agent`, `rag`, and `tool` are all fully implemented** - a real LangGraph
 workflow ([`retrieve_context` ∥ `execute_tools`] → `generate_answer`; the
 first two run in parallel, since neither depends on the other's output)
 calling a real local LLM via Ollama, real retrieval against a real Qdrant
-collection (ingest via `POST /rag/documents`/`POST /rag/documents/file`,
-search via `POST /rag/search`), and a real tool registry (local pdf/markdown
+collection through agent-scoped document routes, and a real tool registry (local pdf/markdown
 extraction, plus a `fetch` tool adapted from the external Fetch MCP server).
 All three are verified against live services, not just unit
-tests - see "How to run" below. **`infrastructure/database.py`'s CRUD
-methods** (`find_one`/`insert_one`/`update_one`) are the one remaining
-scaffold - nothing in the current request path calls them, so nothing is
-actually blocked on it; `connect`/`close` are real. See `.claude/rules/` for
+tests - see "How to run" below. MongoDB CRUD and startup health checks are
+implemented and power persisted agent definitions. See `.claude/rules/` for
 the conventions this project follows, `CLAUDE.md` for the project-wide
-summary, and [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog +
-Semantic Versioning) for release history.
+summary, and [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog + Semantic
+Versioning) for release history.
 
 ## Project structure
 
@@ -35,13 +35,15 @@ ai-agent-platform/
 │   │                        # point at its root, internal/ for everything
 │   │                        # supporting it - see architecture.md
 │   ├── agent/src/agent/
-│   │   ├── service.py      #   AgentService - the module's public entry point
-│   │   ├── api/            #   POST /chat + POST /chat/stream: router.py + schemas.py
+│   │   ├── service.py      #   private/admin workflow implementation
 │   │   └── internal/       #   ports.py, graph.py (state, the LangGraph
 │   │                       #   workflow, AgentError), prompts.py
+│   ├── agents/src/agents/  #   public customizable-agent module
+│   │   ├── service.py      #   versioned definition CRUD + tool validation
+│   │   ├── runtime.py      #   per-definition compiled runtime cache
+│   │   └── api/            #   /agents definition, document, chat, stream routes
 │   ├── rag/src/rag/
-│   │   ├── service.py      #   RAGService - the module's public entry point
-│   │   ├── api/            #   POST /rag/documents, /documents/file, /search
+│   │   ├── service.py      #   private retrieval implementation
 │   │   └── internal/       #   ports.py (Embedder, VectorStore), errors.py (RagError)
 │   └── tool/src/tool/       # tool registry - no internal/ (see architecture.md)
 │       ├── registry.py     #   ToolRegistry + RegisteredTool - register_local/register_mcp
@@ -54,6 +56,7 @@ ai-agent-platform/
 │
 ├── infrastructure/          # Concrete adapters - the only place that
 │   ├── database.py         # imports MongoDB/Redis/Qdrant/LLM SDKs directly
+│   ├── agent_definitions.py# persisted versioned agent configurations
 │   ├── redis.py
 │   ├── qdrant.py
 │   └── llm.py              # OllamaProvider + MistralProvider (generate +
@@ -97,7 +100,7 @@ why that's not the same as `agent` importing `infrastructure`.
 - `app/lifespan.py` is the only file allowed to import across more than one
   of `modules/*` and `infrastructure/*` - it constructs adapters and
   injects them into module services once, at startup. `app/main.py` just
-  wires that in and mounts each module's router (e.g. `agent.api.router`);
+  wires that in and mounts each module's router (e.g. `agents.api.router`);
   it, `app/errors.py`, `app/health.py`, and each module's `api.py` import
   from at most one module, not across the boundary.
 - `agent` and `rag` depend only on `typing.Protocol` ports they own
@@ -137,14 +140,52 @@ variable still wins over the file. It didn't always: `uv run` alone doesn't
 read `.env`, and until that call was added every value in it was silently
 inert, which is how `OLLAMA_REASONING=false` failed to apply and broke tool
 calling outright (see "Performance notes" below). `GET /health` always works.
-`POST /rag/documents` (JSON text) and `POST /rag/documents/file` (multipart
-txt/pdf/docx upload) index a document; `POST /rag/search` finds relevant
-chunks; `POST /chat` runs the full agent workflow (retrieve, run tools,
-answer) end to end against whatever's been indexed. `POST
-/chat/stream` runs the identical workflow but streams the final answer
-back as plain text as it's generated, instead of waiting for the whole
-thing - see [`api-conventions.md`](.claude/rules/api-conventions.md) on
-why that's a separate endpoint rather than a flag on `POST /chat`.
+Public document ingestion and conversations are always scoped to a configurable
+agent: `POST /agents/{agent_id}/documents` accepts JSON text,
+`POST /agents/{agent_id}/documents/file` accepts multipart TXT/PDF/DOCX, and
+`POST /agents/{agent_id}/chat` starts a conversation. The separate
+`/agents/{agent_id}/chat/stream` endpoint returns streaming output.
+
+### Multiple customizable agents
+
+The `/agents` routes persist configurable agents in MongoDB. Each definition
+has a name, system prompt, and an optional tool allowlist; each update advances
+its version and causes the next request to use a freshly compiled runtime. An
+agent's document retrieval and Redis session IDs are scoped by its `owner_id`
+and `agent_id`, so separate local users and agents do not share context.
+
+Authentication is intentionally disabled for now. `owner_id` is therefore a
+required caller-provided development scope, **not a security boundary**. Do
+not expose these routes publicly until real authentication is restored.
+
+```bash
+# Create a configurable agent.
+curl -X POST http://localhost:8000/agents \
+  -H 'Content-Type: application/json' \
+  -d '{"owner_id":"local-dev","name":"Researcher",\
+       "system_prompt":"Research carefully and cite retrieved context.",\
+       "allowed_tools":[]}'
+
+# List that owner's definitions, then use the returned id in the next calls.
+curl 'http://localhost:8000/agents?owner_id=local-dev'
+
+# Index private context and chat with that one agent.
+curl -X POST 'http://localhost:8000/agents/AGENT_ID/documents?owner_id=local-dev' \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"notes","text":"Project notes go here."}'
+
+# Upload TXT, PDF, or DOCX context for this agent.
+curl -X POST 'http://localhost:8000/agents/AGENT_ID/documents/file?owner_id=local-dev' \
+  -F 'file=@./project-notes.pdf' \
+  -F 'source_id=project-notes'
+
+curl -X POST 'http://localhost:8000/agents/AGENT_ID/chat?owner_id=local-dev' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"research-1","message":"What do the notes say?"}'
+```
+
+`POST /agents/{agent_id}/chat/stream` accepts the same body and returns the
+answer as `text/plain`; use `curl --no-buffer` to display its live output.
 
 ```bash
 uv run pytest        # run the test suite
@@ -219,8 +260,8 @@ Redis is the single shared source of truth. Two things specific to a
   save sequence in `AgentService.run`/`run_stream`. Without it, two
   concurrent requests could both read the same starting history and then
   both save, with whichever save lands last silently discarding the
-  other's turn - verified live by firing two concurrent `POST /chat`
-  requests at one `session_id` and confirming both turns land in the
+  other's turn - verified live by firing two concurrent agent-chat requests
+  at one `session_id` and confirming both turns land in the
   final Redis-stored history, not just one.
 - Session checkpoints carry a 7-day TTL (`_SESSION_TTL_SECONDS`,
   `infrastructure/redis.py`), refreshed on every save, so an abandoned

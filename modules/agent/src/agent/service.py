@@ -20,10 +20,9 @@ MAX_HISTORY_MESSAGES = 40
 class AgentTurnResult:
     """Everything about one completed ``run()`` turn, not just the reply text.
 
-    ``run()``'s own domain type, not ``agent.api.schemas.ChatResponse`` -
-    the API schema is built from this in ``agent.api.router.chat``,
-    keeping the internal shape separate from the response model per
-    ``.claude/rules/api-conventions.md``.
+    ``run()``'s own domain type, not an HTTP response model. The public
+    ``agents`` module translates it at its API boundary, keeping the internal
+    shape separate from transport concerns.
 
     Attributes:
         answer: The generated reply.
@@ -96,6 +95,7 @@ class AgentService:
         retriever: Retriever,
         memory: Memory,
         tool_registry: ToolRegistry,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         self._memory = memory
         self._llm = llm
@@ -105,7 +105,13 @@ class AgentService:
         # including) generate_answer for run_stream(), which makes that
         # last LLM call itself in streaming mode - see AgentGraph's
         # docstring for why that one step isn't just another graph node.
-        self._agent_graph = AgentGraph(llm=llm, retriever=retriever, tool_registry=tool_registry)
+        self._system_prompt = system_prompt
+        self._agent_graph = AgentGraph(
+            llm=llm,
+            retriever=retriever,
+            tool_registry=tool_registry,
+            system_prompt=system_prompt,
+        )
         self._graph = self._agent_graph.compile()
         self._prefix_graph = self._agent_graph.compile_prefix()
 
@@ -153,7 +159,10 @@ class AgentService:
 
             result = await self._graph.ainvoke(
                 AgentState(
-                    session_id=session_id, input=message, history=history, allowed_tools=tools or []
+                    session_id=session_id,
+                    input=message,
+                    history=history,
+                    allowed_tools=tools or [],
                 )
             )
             answer = result.get("answer") if isinstance(result, dict) else None
@@ -185,7 +194,7 @@ class AgentService:
         generator, which is what this was before ``ChatStreamMetadata``
         existed - because ``tools_invoked``/``chunks_retrieved`` are only
         useful to a caller as HTTP response headers (see
-        ``agent.api.router.chat_stream``), and headers must be sent
+        the public API route), and headers must be sent
         before any body bytes go out. That forces the metadata to be
         fully known before the answer starts streaming, which is exactly
         when it *is* known: ``retrieve_context``/``execute_tools`` (via
@@ -200,8 +209,7 @@ class AgentService:
         treats "headers arrived" as a user-visible event distinct from
         "the first byte of the answer arrived," which was already gated
         on prep completing either way (see the module's existing "still
-        has to finish first, same as POST /chat" note in
-        ``agent.api.router.chat_stream``).
+        has to finish first).
 
         ``memory.session_lock(session_id)`` still spans the *whole* turn
         - prep here and the streaming/save in the returned generator -
@@ -211,7 +219,7 @@ class AgentService:
         inside the generator's ``finally``. That means the returned
         generator must actually be consumed (or explicitly closed) or
         the lock leaks - true of the one real caller,
-        ``agent.api.router.chat_stream``, which immediately hands it to
+        the public API route, which immediately hands it to
         ``StreamingResponse`` and Starlette guarantees will drain or
         close it either way, including on an early client disconnect.
 
@@ -248,7 +256,7 @@ class AgentService:
         # method on AgentGraph) so the graph doesn't have to carry a public
         # surface that exists for exactly one external caller.
         prompt = GENERATE_ANSWER_PROMPT_TEMPLATE.format(
-            system_prompt=SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
             history=format_history(history),
             input=message,
             context=format_context(prefix_result.get("context", [])),

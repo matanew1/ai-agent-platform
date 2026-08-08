@@ -3,6 +3,7 @@ workflow itself.
 
 Not part of this module's public surface - nothing outside `agent` imports
 from here. `agent.service.AgentService` is the module's one supported
-entry point; `agent.api.router` is its HTTP surface. See
+entry point. The public customizable-agent HTTP surface belongs to the
+separate ``agents`` module. See
 `.claude/rules/architecture.md` on the root-vs-`internal/` convention.
 """

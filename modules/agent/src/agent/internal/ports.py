@@ -37,11 +37,11 @@ class LLMProvider(Protocol):
     def generate_stream(self, prompt: str) -> AsyncIterator[str]:
         """Generate a completion for a prompt, yielding it token-by-token.
 
-        Used only by ``AgentService.run_stream`` for ``POST /chat/stream`` -
+        Used only by ``AgentService.run_stream`` -
         every other caller (the graph's nodes) wants the full string back
         from ``generate`` and would gain nothing from streaming it. See
         ``.claude/rules/api-conventions.md`` on why streaming gets its own
-        endpoint rather than a flag on ``POST /chat``.
+        endpoint rather than a flag on a normal chat request.
 
         Args:
             prompt: Fully-rendered prompt text.

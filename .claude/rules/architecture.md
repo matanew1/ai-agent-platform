@@ -28,16 +28,17 @@ modules/                    — uv workspace members, one installable package ea
                                Each follows the same internal layout — see
                                "Module-internal layout" below:
     agent/src/agent/
-        service.py             — the module's one public entry point (AgentService)
-        api/                    — HTTP surface: router.py (POST /chat,
-                                   POST /chat/stream), schemas.py
+        service.py             — private/admin workflow implementation (AgentService)
         internal/               — ports.py; graph.py (state, the LangGraph
                                    workflow, AgentError); prompts.py (large
                                    enough - 3 templates - to earn its own file)
+    agents/src/agents/
+        service.py             — public versioned agent-definition service
+        runtime.py             — per-definition compiled AgentService cache
+        api/                    — HTTP surface: /agents definition, document,
+                                   chat, and streaming routes
     rag/src/rag/
-        service.py             — the module's one public entry point (RAGService)
-        api/                    — HTTP surface: router.py (POST /rag/documents,
-                                   /documents/file, /search), schemas.py
+        service.py             — private retrieval implementation (RAGService)
         internal/               — ports.py (Embedder, VectorStore,
                                    LLMProvider); errors.py (RagError);
                                    prompts.py (RERANK_PROMPT_TEMPLATE);
@@ -94,16 +95,16 @@ shared/                     — cross-cutting types + logic used by 2+ packages
                                  app/main.py — see "Logging" below
 ```
 
-**Implementation status:** `agent`, `rag`, and `tool` are all fully
+**Implementation status:** private `agent`, public `agents`, `rag`, and `tool` are all fully
 implemented - real LangGraph nodes calling a real LLM, real retrieval/
 ingestion against a real Qdrant collection, and a real local tool registry
 (pdf/markdown extraction) - none of it mocked in tests. All three are
 additionally verified against live services, not just unit-tested.
-`infrastructure/database.py`'s CRUD methods
-(`find_one`/`insert_one`/`update_one`) are the one remaining
-`NotImplementedError` scaffold - nothing in the current request path calls
-them; `connect`/`close` are real, as are `infrastructure/{redis,qdrant,llm}.py`
-in full.
+The public `agents` module owns all HTTP endpoints; singular `agent` and
+`rag` are private implementations used by that module and by private tests.
+`infrastructure/database.py` provides the complete CRUD surface used by
+agent-definition persistence and verifies MongoDB availability with a startup
+ping. `infrastructure/{redis,qdrant,llm}.py` are likewise fully implemented.
 
 **Reranking:** `RAGService.search` optionally reranks a wider
 vector-search candidate set with an LLM before returning `top_k` -
@@ -128,7 +129,7 @@ Two levers control it, at different scopes:
   `llm` into `RAGService` at all. `false` means reranking is never even
   attempted, at zero latency cost, useful for a deployment where
   vector-search speed matters more than the accuracy this adds.
-- `rerank` (a `RAGService.search`/`POST /rag/search` parameter, default
+- `rerank` (a `RAGService.search` parameter, default
   `true`) - a per-call opt-out once the capability exists. Requesting
   `rerank=True` when the process has no `llm` configured never raises -
   it silently no-ops to plain vector-search order, the same
@@ -337,15 +338,14 @@ happens once, at the composition root (FastAPI app startup / DI container) —
 not inside the module that consumes it.
 
 This isn't just illustrative - `rag`/`QdrantVectorStore` work exactly this
-way in the running code, verified live (`POST /rag/documents` then `POST
-/rag/search` against a real Qdrant collection returns real ranked
-results). The same pattern holds for `agent.internal.ports.LLMProvider`,
+way in the running code, verified live through agent-scoped document ingestion
+and chat. The same pattern holds for `agent.internal.ports.LLMProvider`,
 now with two real implementations in `infrastructure/llm.py` -
 `OllamaProvider` (local) and `MistralProvider` (remote, via
 `ChatMistralAI`) - selected by `LLM_PROVIDER` in `app/lifespan.py`. Neither
 imports `agent`, `agent.internal.graph` never imports `infrastructure`,
 and both work end to end verified live: a real Ollama server and the real
-Mistral API each answered the same `POST /chat` request correctly, with
+Mistral API each answered the same agent workflow request correctly, with
 `agent.internal.graph` unchanged either way.
 
 Use `typing.Protocol` for ports by default (structural typing, no inheritance
@@ -377,7 +377,7 @@ implementation, not just a shared shape.
   (`MongoDatabase`, `RedisSessionStore`, `QdrantVectorStore`,
   `OllamaProvider`) and injects them into module services (`RAGService`,
   `AgentService`, ...) via their constructors. The result is attached to
-  `app.state` (e.g. `app.state.agent_service`) and route handlers read it
+  `app.state` (e.g. `app.state.agent_runtime_factory`) and route handlers read it
   from `request.app.state` — routes never construct a service themselves.
   There is no separate `app/container.py`; introduce one only if `lifespan`
   actually gets unwieldy, not preemptively.
@@ -391,16 +391,16 @@ implementation, not just a shared shape.
   matters most for `AgentService`: its constructor builds an `AgentGraph`
   and **compiles** it twice - once as the full workflow (`compile()`, used
   by `run()`) and once as everything up to `generate_answer`
-  (`compile_prefix()`, used by `run_stream()` for `POST /chat:stream` - see
+  (`compile_prefix()`, used by `run_stream()` for public agent streaming - see
   `agent.internal.graph.AgentGraph`'s docstring for why streaming needs a
   second compiled form rather than a flag on the first). Neither compile
   must ever happen per chat call, only once at startup. Nothing in the
-  request path (`agent.api.router.chat`/`chat_stream`, `AgentService.run`/
-  `run_stream`) constructs anything; the router only reads
-  `request.app.state.agent_service`. Verified, not just asserted: booting
+  request path (`agents.api.router`, `AgentService.run`/`run_stream`)
+  constructs anything; the router reads the configured runtime factory from
+  `request.app.state`. Verified, not just asserted: booting
   the app with `LOG_LEVEL=DEBUG` shows `"AgentService + LangGraph workflow
   built once for this process"` exactly once at startup, and it does not
-  appear again when a `POST /chat` or `POST /chat:stream` request is
+  appear again when an agent chat or streaming request is
   handled afterward.
 
 ## Avoiding over-engineering

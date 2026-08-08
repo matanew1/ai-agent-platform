@@ -131,7 +131,7 @@ class AgentState(BaseModel):
     session_id: str
     input: str
     history: list[ChatMessage] = Field(default_factory=list)
-    allowed_tools: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = None
     context: list[Chunk] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
     answer: str | None = None
@@ -189,10 +189,12 @@ class AgentGraph:
         llm: LLMProvider,
         retriever: Retriever,
         tool_registry: ToolRegistry,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         self._llm = llm
         self._retriever = retriever
         self._tool_registry = tool_registry
+        self._system_prompt = system_prompt
 
     async def _retrieve_context(self, state: AgentState) -> dict[str, Any]:
         """Fetch context chunks relevant to the current input."""
@@ -220,7 +222,7 @@ class AgentGraph:
             return {"tool_results": []}
 
         prompt = TOOL_CALL_PROMPT_TEMPLATE.format(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=self._system_prompt,
             input=state.input,
             tools=format_tools(tools),
         )
@@ -248,7 +250,7 @@ class AgentGraph:
     async def _generate_answer(self, state: AgentState) -> dict[str, Any]:
         """Produce the final answer from context and tool results."""
         prompt = GENERATE_ANSWER_PROMPT_TEMPLATE.format(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=self._system_prompt,
             history=format_history(state.history),
             input=state.input,
             context=format_context(state.context),

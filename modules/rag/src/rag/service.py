@@ -47,6 +47,7 @@ class RAGService:
         source_id: str,
         chunk_size: int = 500,
         chunk_overlap: int = 50,
+        metadata: dict[str, str] | None = None,
     ) -> int:
         """Chunk, embed, and index a document."""
         logger.debug(
@@ -65,7 +66,7 @@ class RAGService:
                 id=f"{source_id}:{index}",
                 text=chunk,
                 score=0.0,
-                metadata={"source_id": source_id},
+                metadata={"source_id": source_id, **(metadata or {})},
             )
             for index, chunk in enumerate(texts)
         ]
@@ -74,7 +75,13 @@ class RAGService:
         await self._vector_store.upsert(chunks, embeddings)
         return len(chunks)
 
-    async def search(self, query: str, top_k: int = 5, rerank: bool = True) -> list[Chunk]:
+    async def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        rerank: bool = True,
+        metadata_filter: dict[str, str] | None = None,
+    ) -> list[Chunk]:
         """Search for chunks relevant to a query.
 
         Args:
@@ -99,8 +106,18 @@ class RAGService:
         logger.debug("RAGService.search query_len=%d top_k=%d rerank=%s", len(query), top_k, rerank)
         embedding = await self._embedder.embed(query)
         if self._llm is None or not rerank:
-            return await self._vector_store.search(embedding, top_k)
+            return await self._search_vectors(embedding, top_k, metadata_filter)
 
         candidate_k = max(top_k * _RERANK_CANDIDATE_MULTIPLIER, _MIN_RERANK_CANDIDATES)
-        candidates = await self._vector_store.search(embedding, candidate_k)
+        candidates = await self._search_vectors(embedding, candidate_k, metadata_filter)
         return await rerank_chunks(self._llm, query, candidates, top_k)
+
+    async def _search_vectors(
+        self, embedding: list[float], top_k: int, metadata_filter: dict[str, str] | None
+    ) -> list[Chunk]:
+        """Call the vector store with a metadata filter only when needed."""
+        if metadata_filter is None:
+            return await self._vector_store.search(embedding, top_k)
+        return await self._vector_store.search(
+            embedding, top_k, metadata_filter=metadata_filter
+        )
