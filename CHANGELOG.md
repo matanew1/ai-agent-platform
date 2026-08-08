@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.5.1](https://github.com/matanew1/ai-agent-platform/compare/v0.5.0...v0.5.1) (2026-08-08)
+
+
+### Added
+
+* **registry:** enable fluent chaining for local and MCP tool registrations ([401f80d](https://github.com/matanew1/ai-agent-platform/commit/401f80d95db5c7084bd0c464cdfaf4d23d227217))
+
 ## [0.5.0](https://github.com/matanew1/ai-agent-platform/compare/v0.4.0...v0.5.0) (2026-08-08)
 
 
