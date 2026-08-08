@@ -72,13 +72,11 @@ def test_agents_module_exposes_scoped_file_ingestion() -> None:
     assert "/rag/documents/file" not in paths
 
 
-def test_private_agent_and_rag_routes_are_labeled_in_swagger() -> None:
-    """Private test routes are visible but unambiguously marked in OpenAPI."""
+def test_swagger_exposes_only_the_public_agents_surface() -> None:
+    """Private workflow and retrieval routes are not mounted in the app."""
     from app.main import app
 
     schema = app.openapi()
 
-    assert "[ADMIN ONLY] Agent" in {tag["name"] for tag in schema["tags"]}
-    assert "[ADMIN ONLY] RAG" in {tag["name"] for tag in schema["tags"]}
-    assert schema["paths"]["/admin/agent/chat"]["post"]["summary"].startswith("[ADMIN ONLY]")
-    assert schema["paths"]["/admin/rag/search"]["post"]["summary"].startswith("[ADMIN ONLY]")
+    assert not any(path.startswith("/admin/") for path in schema["paths"])
+    assert not any(tag["name"].startswith("[ADMIN ONLY]") for tag in schema.get("tags", []))
