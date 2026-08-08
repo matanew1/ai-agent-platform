@@ -18,14 +18,14 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from agent.service import AgentService
 from fastapi import FastAPI
 from rag.service import RAGService
-from tool import tools  # noqa: F401 - import triggers @mcp_tool registration
-from tool.decorator import register_local_tools
+from tool.mcp.config import load_servers
 from tool.registry import ToolRegistry
+from tool.tools import markdown, pdf
 
 from infrastructure.database import MongoDatabase
 from infrastructure.llm import MistralProvider, OllamaEmbedder, OllamaProvider
@@ -127,36 +127,56 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await memory.connect()
     logger.debug("Mongo + Redis connections opened")
 
-    # SECTION 3 - Build the tool registry from local tools (tool.tools).
-    tool_registry = ToolRegistry()
-    register_local_tools(tool_registry)
-    logger.debug("Tool registry ready: %s", [t.name for t in tool_registry.get_tools()])
-
-    # SECTION 4 - Build module services, injecting the infrastructure and
-    # registry built above through their constructors. AgentService.__init__
-    # compiles the LangGraph workflow exactly once, right here - never
-    # per-request (see module docstring).
-    rag_service = RAGService(vector_store=vector_store, embedder=embedder)
-    agent_service = AgentService(
-        llm=llm,
-        retriever=rag_service,
-        memory=memory,
-        tool_registry=tool_registry,
-    )
-    logger.info("AgentService + LangGraph workflow built once for this process")
-
-    # SECTION 5 - Expose services to route handlers via app.state - see
-    # .claude/rules/architecture.md (dependency injection).
-    app.state.tool_registry = tool_registry
-    app.state.rag_service = rag_service
-    app.state.agent_service = agent_service
-
-    # SECTION 6 - Hand control back to FastAPI; it serves requests until
-    # shutdown, then execution falls through to teardown below.
+    # From here on, everything through SECTION 6's yield runs inside this
+    # try so that a failure in any of it (e.g. SECTION 3B's MCP server
+    # failing to spawn) still releases the connections just opened above,
+    # instead of leaking them while startup fails - see SECTION 7.
+    mcp_exit_stack = AsyncExitStack()
     try:
+        # SECTION 3 - Build the tool registry. Local tools are plain
+        # functions (tool/tools/*.py) with no registration magic of their
+        # own - each is registered explicitly, once, right here.
+        tool_registry = ToolRegistry()
+        tool_registry.register_local(pdf.DEFINITION, pdf.extract_pdf)
+        tool_registry.register_local(markdown.DEFINITION, markdown.extract_markdown)
+
+        # SECTION 3B - Register every external MCP server declared in
+        # tool/mcp/mcp-servers.yaml the same explicit way, just awaited
+        # instead of a plain call - connecting is I/O a local tool doesn't
+        # need. Adding a server is a new YAML entry, not a code change here.
+        # mcp_exit_stack keeps every such connection open for the process's
+        # lifetime and is closed in SECTION 7 alongside the other
+        # connections opened in SECTION 2.
+        for server_params in load_servers():
+            await tool_registry.register_mcp(server_params, mcp_exit_stack)
+
+        logger.debug("Tool registry ready: %s", [t.name for t in tool_registry.get_tools()])
+
+        # SECTION 4 - Build module services, injecting the infrastructure and
+        # registry built above through their constructors. AgentService.__init__
+        # compiles the LangGraph workflow exactly once, right here - never
+        # per-request (see module docstring).
+        rag_service = RAGService(vector_store=vector_store, embedder=embedder)
+        agent_service = AgentService(
+            llm=llm,
+            retriever=rag_service,
+            memory=memory,
+            tool_registry=tool_registry,
+        )
+        logger.info("AgentService + LangGraph workflow built once for this process")
+
+        # SECTION 5 - Expose services to route handlers via app.state - see
+        # .claude/rules/architecture.md (dependency injection).
+        app.state.tool_registry = tool_registry
+        app.state.rag_service = rag_service
+        app.state.agent_service = agent_service
+
+        # SECTION 6 - Hand control back to FastAPI; it serves requests until
+        # shutdown, then execution falls through to teardown below.
         yield
     finally:
-        # SECTION 7 - Release connections opened in SECTION 2.
+        # SECTION 7 - Release connections opened in SECTION 2 and SECTION 3B.
         logger.info("Lifespan shutdown: releasing connections")
         await database.close()
         await memory.close()
+        await mcp_exit_stack.aclose()

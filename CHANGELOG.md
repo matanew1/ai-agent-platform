@@ -5,7 +5,24 @@ All notable changes to this project are documented here. Format follows
 [Semantic Versioning](https://semver.org/) once there's a published API to
 version against - starting at `0.1.0` for this first tracked release.
 
-## [Unreleased]
+Releases are cut with `npx standard-version` (config in `.versionrc.json`),
+which builds the sections below from [Conventional
+Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
+`fix:` prefix is what puts it in this file. Note that below `1.0.0` a
+`feat:` bumps a patch, not a minor: pass `--release-as minor` when a
+release deserves one.
+
+## [0.2.0](https://github.com/matanew1/ai-agent-platform/compare/v0.1.0...v0.2.0) (2026-08-07)
+
+
+### Added
+
+* **tool:** add MCP server support with fetch and time servers ([6b4de24](https://github.com/matanew1/ai-agent-platform/commit/6b4de2455107cd72a1ab4899577b926d7dcf7a73))
+
+
+### Fixed
+
+* **llm:** raise on an empty completion instead of returning it as an answer ([4d79083](https://github.com/matanew1/ai-agent-platform/commit/4d79083167cb6b9cf70a33c324847e4852b83758))
 
 ## [0.1.0] - 2026-08-07
 

@@ -1,12 +1,9 @@
-"""Local tool registry: agent-callable tools, unified behind one lookup/
-execution surface that the agent depends on through its ``ToolRegistry``
-port.
+"""Agent-callable tool registry.
 
-The directory is ``modules/tool/`` and the importable package is ``tool``.
-Tool definitions produced here mirror the Model Context Protocol's tool
-shape (``ToolDefinition``/``ToolResult``, see ``shared/types.py``), though
-this module only backs them with local Python functions today - no
-external MCP server integration. See ``.claude/rules/tool-conventions.md``.
+In-process tools live in ``tool.tools`` (plain functions, no decorator)
+and external MCP-server adapters live in ``tool.mcp``. Both are wired into
+one ``ToolRegistry`` explicitly, via ``register_local``/``register_mcp``
+(see ``app/lifespan.py``).
 """
 
 from tool.registry import ToolRegistry

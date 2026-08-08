@@ -4,10 +4,15 @@
 
 ```
 app/                        — FastAPI app; the composition root
-    main.py                  — assembles the ASGI app (configures logging,
-                                 wires lifespan, registers error handlers,
-                                 mounts routers) and exposes `run()`, the
-                                 `uv run app` process entry point
+    main.py                  — assembles the ASGI app (loads .env,
+                                 configures logging, wires lifespan,
+                                 registers error handlers, mounts routers)
+                                 and exposes `run()`, the `uv run app`
+                                 process entry point. load_dotenv() runs
+                                 first, before configure_logging() and
+                                 before anything reads os.getenv - `uv run`
+                                 does not read .env itself, so without it
+                                 every value in .env is silently inert
     lifespan.py               — the actual construction logic: builds
                                  infrastructure adapters + module services
                                  exactly once per process (singleton — see
@@ -38,17 +43,29 @@ modules/                    — uv workspace members, one installable package ea
                                    itself lives in service.py, thin enough
                                    (chunk -> embed -> upsert) that it never
                                    needed its own internal/ file
-    tool/src/tool/             — local tool registry. No internal/ here
-                                  (see "Module-internal layout" below) - every
-                                  file is at the root:
+    tool/src/tool/             — tool registry. No internal/ here (see
+                                  "Module-internal layout" below) - registry.py
+                                  is the one root file, tool sources split
+                                  into two sibling packages, both wired into
+                                  it the same explicit way (register_local /
+                                  register_mcp, called from app/lifespan.py -
+                                  no decorators, no import-time side effects):
         registry.py             — the module's one public entry point
                                    (ToolRegistry + RegisteredTool)
-        decorator.py             — the @mcp_tool decorator mechanism -
-                                   open/closed: a new tools/*.py file never
-                                   touches registry.py or decorator.py
-        tools/                  — one file per local tool (pdf.py,
-                                   markdown.py, ...) — this is where a new
-                                   tool gets added
+        tools/                  — in-process tools: one file per tool
+                                   (pdf.py, markdown.py, ...), each just a
+                                   module-level DEFINITION (ToolDefinition)
+                                   + a plain async handler function - where
+                                   a new local tool gets added
+        mcp/                    — tools adapted from an external MCP server:
+                                   mcp-servers.yaml (one entry per server -
+                                   fetch is today's one example - parsed by
+                                   config.py::load_servers() into
+                                   StdioServerParameters, no Python needed
+                                   to add a server); adapter.py
+                                   (McpServerAdapter - stdio connection +
+                                   adaptation, reusable across
+                                   servers, doesn't change per server)
 
 infrastructure/             — concrete adapters, one file per external system
     database.py              — MongoDB
@@ -99,9 +116,10 @@ at the root:
 - **`api/`** — present only on modules with an HTTP surface (today, just
   `agent`). `router.py` (an `APIRouter`) + `schemas.py` (its request/response
   Pydantic models), mounted from `app/main.py`.
-- **`tools/`** on `tool` is the one other public subfolder — not
-  "internal," because it's exactly where new local tools get added, not an
-  implementation detail to hide.
+- **`tools/`/`mcp/`** on `tool` are the other public subfolders — not
+  "internal," because they're exactly where new tools get added (a local
+  Python function, or an adapted MCP server), not an implementation detail
+  to hide.
 - **`internal/`** — everything else, on modules where a nontrivial amount
   of "everything else" actually exists (`agent`, `rag`, both of which own
   a `Protocol` port something else could someday swap the implementation
@@ -109,20 +127,20 @@ at the root:
   `app`, not a sibling module, not tests reaching past the module's public
   surface. `internal/__init__.py` says so explicitly; read it before adding
   an import that reaches into another module's `internal/`.
-- **`tool` has no `internal/`** — `decorator.py` sits at the module root
+- **`tool` has no `internal/`** — `tools/`/`mcp/` sit at the module root
   next to `registry.py`. This is a deliberate exception, not a lapse:
   `internal/`'s job is hiding an implementation behind a `Protocol`
   boundary so it's free to change shape, but `tool` doesn't own a port of
   its own the way `agent`/`rag` do - it structurally satisfies a `Protocol`
   `agent` owns (`agent.internal.ports.ToolRegistry`), rather than defining
   one of its own to hide an implementation behind. The actual boundary that
-  matters - `agent` never importing `tool.registry` or `tool.decorator`
-  directly - is already enforced by `agent` only depending on its own
-  `ToolRegistry` `Protocol`, not by a directory hiding those files. Nesting
-  them under `internal/` would add a path segment with no real protection
-  behind it, on a module small enough (2 files' worth of logic plus
-  `tools/`) that flat is easier to navigate. If `tool` ever grows a second
-  axis of "implementation detail vs. public surface" - e.g. it starts
+  matters - `agent` never importing `tool.registry`, `tool.tools`, or
+  `tool.mcp` directly - is already enforced by `agent` only depending on
+  its own `ToolRegistry` `Protocol`, not by a directory hiding those files.
+  Nesting them under `internal/` would add a path segment with no real
+  protection behind it, on a module small enough that flat is still easier
+  to navigate. If `tool` ever grows a second axis of "implementation
+  detail vs. public surface" - e.g. it starts
   owning a `Protocol` of its own - revisit this.
 
 Why: a module's `service.py`/`registry.py` signature is a promise to the
@@ -146,15 +164,18 @@ chunk-embed-upsert/embed-search, thin enough that routing them through a
 separate `internal/pipeline.py` would have been a layer of indirection
 with nothing behind it; the logic lives directly in `service.py`. Neither
 shape is "more correct" than the other - each reflects where that
-module's actual complexity sits. `tool`
-has no `internal/` at all (see above) - its two root files are
-`registry.py` (`ToolRegistry`, `RegisteredTool`) and `decorator.py` (the
-`@mcp_tool` decorator and local-tool bookkeeping), split because
-`decorator.py` depends on `registry.py` and not the other way around, not
-because "more files" is inherently good. Don't pre-split by category (one
-file each for "exceptions", "state", "config", ...) the way earlier passes
-over this codebase did, since nothing outside the module sees those file
-boundaries anyway.
+module's actual complexity sits. `tool` has no `internal/` at all (see
+above) - `registry.py` (`ToolRegistry`, `RegisteredTool`) is its one root
+file, with `tools/` and `mcp/` split by where a tool comes from, not by
+category: `tools/*.py` are plain functions with a `DEFINITION` constant,
+registered via `ToolRegistry.register_local` (no I/O, so no need for
+anything fancier); `mcp/adapter.py`'s `McpServerAdapter` handles the stdio
+connection + adaptation for `ToolRegistry.register_mcp` (`async`, since
+connecting *is* I/O) - two different registration mechanisms, not two
+arbitrary halves of one file. Don't pre-split by category (one file each
+for "exceptions", "state",
+"config", ...) the way earlier passes over this codebase did, since
+nothing outside the module sees those file boundaries anyway.
 
 While consolidating, drop an exception subclass that nothing catches
 specifically (`except SpecificError:`, not just `except AgentError:`) —

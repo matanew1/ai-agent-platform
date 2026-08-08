@@ -8,8 +8,9 @@ workflow ([`retrieve_context` ∥ `execute_tools`] → `generate_answer`; the
 first two run in parallel, since neither depends on the other's output)
 calling a real local LLM via Ollama, real retrieval against a real Qdrant
 collection (ingest via `POST /rag/documents`/`POST /rag/documents/file`,
-search via `POST /rag/search`), and a real local tool registry (pdf/markdown
-extraction). All three are verified against live services, not just unit
+search via `POST /rag/search`), and a real tool registry (local pdf/markdown
+extraction, plus a `fetch` tool adapted from the external Fetch MCP server).
+All three are verified against live services, not just unit
 tests - see "How to run" below. **`infrastructure/database.py`'s CRUD
 methods** (`find_one`/`insert_one`/`update_one`) are the one remaining
 scaffold - nothing in the current request path calls them, so nothing is
@@ -42,12 +43,14 @@ ai-agent-platform/
 │   │   ├── service.py      #   RAGService - the module's public entry point
 │   │   ├── api/            #   POST /rag/documents, /documents/file, /search
 │   │   └── internal/       #   ports.py (Embedder, VectorStore), errors.py (RagError)
-│   └── tool/src/tool/       # local tool registry - no internal/ (see architecture.md)
-│       ├── registry.py     #   ToolRegistry + RegisteredTool - the module's public entry point
-│       ├── decorator.py    #   the @mcp_tool decorator mechanism
-│       └── tools/          #   public: one file per local tool
-│           ├── pdf.py      #     extract_pdf
-│           └── markdown.py #     extract_markdown
+│   └── tool/src/tool/       # tool registry - no internal/ (see architecture.md)
+│       ├── registry.py     #   ToolRegistry + RegisteredTool - register_local/register_mcp
+│       ├── tools/          #   in-process tools: one file per tool - pdf.py, markdown.py,
+│       │                   #     each just a DEFINITION constant + a plain async function
+│       └── mcp/            #   tools adapted from an external MCP server:
+│                           #     mcp-servers.yaml (one entry per server, no
+│                           #     Python needed) + config.py (loads it) +
+│                           #     adapter.py (reusable stdio connection)
 │
 ├── infrastructure/          # Concrete adapters - the only place that
 │   ├── database.py         # imports MongoDB/Redis/Qdrant/LLM SDKs directly
@@ -127,9 +130,13 @@ Local admin UIs (dev convenience only, not app runtime dependencies):
 Copy `.env.example` to `.env` and adjust if needed (defaults assume a local
 Ollama server on its default port). No local model/GPU at all? Set
 `LLM_PROVIDER=mistralai` and `MISTRAL_API_KEY` instead - `mistral-small-latest`
-(the default) is free-tier eligible, and nothing else about the app changes;
-`uv run --env-file .env app` if you're not relying on your shell to export
-`.env` already (`uv run` alone does not read it). `GET /health` always works.
+(the default) is free-tier eligible, and nothing else about the app changes.
+`app/main.py` loads `.env` itself (`load_dotenv`) before anything reads
+`os.getenv`, so plain `uv run app` picks it up - a real exported shell
+variable still wins over the file. It didn't always: `uv run` alone doesn't
+read `.env`, and until that call was added every value in it was silently
+inert, which is how `OLLAMA_REASONING=false` failed to apply and broke tool
+calling outright (see "Performance notes" below). `GET /health` always works.
 `POST /rag/documents` (JSON text) and `POST /rag/documents/file` (multipart
 txt/pdf/docx upload) index a document; `POST /rag/search` finds relevant
 chunks; `POST /chat` runs the full agent workflow (retrieve, run tools,
@@ -182,6 +189,19 @@ the default for a reason - it was tried against `gpt-oss:20b` (~13GB) on
 headroom. `OLLAMA_REASONING=false` (the `.env.example` default) turns off
 qwen3's chain-of-thought for lower latency; unset it (or set `low`/`medium`/
 `high`) to trade speed for more careful answers.
+
+That last one is more than a latency knob, and it cost a real debugging
+session to find out: `execute_tools` caps its decision-only call at
+`_TOOL_CALL_MAX_TOKENS` (200), and a reasoning model spends generated
+tokens on thinking *before* any visible output. With reasoning left on,
+qwen3 burned all 200 tokens reasoning, Ollama returned
+`done_reason="length"` with empty content, that empty string parsed into
+zero tool calls, and the agent answered "no tool results were available" -
+every layer behaving "correctly", no error anywhere, tool calls silently
+never happening. Two fixes: `.env` is actually loaded now (above), and
+`infrastructure/llm.py`'s `_require_content` raises `LLMError` on an empty
+completion instead of passing it off as an answer, naming
+`done_reason` and the fix in the message.
 
 ### Session concurrency & scaling
 
@@ -236,18 +256,24 @@ limiting/backpressure in front of either today.
 5. Update the dependency diagram in `.claude/rules/architecture.md`.
 
 **New local tool:**
-1. Add a file to `modules/tool/src/tool/tools/` with an
-   `@mcp_tool`-decorated async function (see `tools/pdf.py`).
-2. Import it from `tools/__init__.py`. Nothing else changes.
+1. Add a file to `modules/tool/src/tool/tools/` with a module-level
+   `DEFINITION` (`ToolDefinition`) and a plain async handler function (see
+   `tools/pdf.py`) - no decorator, nothing self-registers.
+2. Add `tool_registry.register_local(newtool.DEFINITION,
+   newtool.new_handler)` to `app/lifespan.py`, alongside the existing calls.
 
-**External tool-server integration (not implemented today):**
-`tool` dropped its external-MCP-server client/loader (and the `mcp` SDK
-dependency that came with it) once the app's only real need turned out to
-be local tools - see
-[`.claude/rules/tool-conventions.md`](.claude/rules/tool-conventions.md#implementation-status).
-Re-adding it means reintroducing that dependency and reconciling it with
-`tool`'s own package name (chosen specifically because it no longer
-collides with `import mcp`).
+**New external-MCP-server tool:** `modules/tool/src/tool/mcp/mcp-servers.yaml`'s
+`fetch` entry is the working example - `command`/`args`, no Python -
+configuring the official Fetch MCP server (`uvx mcp-server-fetch`), whose
+`fetch` tool ends up registered alongside the local ones. Add a new server
+by adding another entry to that same file - nothing else changes:
+`app/lifespan.py` registers every server `tool.mcp.config.load_servers()`
+finds, in a loop, so a new server needs no code change at all. See
+[`.claude/rules/tool-conventions.md`](.claude/rules/tool-conventions.md#implementation-status)
+for the full story, including a real `uvx`/`mcp`-SDK version-compatibility
+gotcha worth knowing before adding a second server, and why `fetch`'s
+markdown-vs-`raw` behaviour is left to the agent per call rather than
+forced in config.
 
 **New LLM provider:** `MistralProvider` (remote, via `ChatMistralAI`) is a
 real second implementation next to `OllamaProvider` (local, via

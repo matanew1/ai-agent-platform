@@ -18,6 +18,7 @@ import os
 import uvicorn
 from agent.api.router import router as agent_router
 from agent.internal.graph import AgentError
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from rag.api.router import router as rag_router
 from tool.api.router import router as tool_router
@@ -28,8 +29,19 @@ from app.lifespan import lifespan
 from shared.logging import configure_logging
 from shared.types import PlatformError
 
-# First thing that runs, before any other module logs anything - see
-# shared/logging.py.
+# Before anything reads os.getenv - which is everything below, plus every
+# default in app/lifespan.py. Without this, .env is inert: `uv run app`
+# doesn't load it, so LLM_PROVIDER/OLLAMA_REASONING/MISTRAL_API_KEY/... all
+# silently fell back to code defaults no matter what .env said. That was a
+# real bug, not a theoretical one: OLLAMA_REASONING=false never applied, so
+# qwen3 kept its default thinking mode on and consumed the whole
+# _TOOL_CALL_MAX_TOKENS budget on reasoning tokens, making every tool call
+# silently vanish (see infrastructure/llm.py's _require_content).
+# override=False so a real exported env var still wins over the file.
+load_dotenv(override=False)
+
+# First thing that runs after the environment is loaded, before any other
+# module logs anything - see shared/logging.py.
 configure_logging()
 
 logger = logging.getLogger(__name__)

@@ -11,9 +11,10 @@
 
 ```
 tests/
-    agent/     — mirrors modules/agent/src/agent
-    rag/       — mirrors modules/rag/src/rag
-    tool/      — mirrors modules/tool/src/tool
+    agent/           — mirrors modules/agent/src/agent
+    rag/             — mirrors modules/rag/src/rag
+    tool/            — mirrors modules/tool/src/tool
+    infrastructure/  — mirrors infrastructure/
 ```
 
 Everything here today is a **unit test**: real dependencies (LLM, vector
@@ -61,7 +62,15 @@ speculatively before there's a real test to put in it.
   `OllamaProvider` and `OllamaEmbedder`) and `infrastructure/qdrant.py` are
   all implemented and verified (manually, see above) but still have no
   committed integration test - that gap, not a missing implementation, is
-  what to fix first for all three. `database.py`'s CRUD methods
+  what to fix first for all three. `tests/infrastructure/test_llm.py` is
+  not that test and doesn't close the gap: it covers
+  `infrastructure/llm.py`'s `_require_content` only, which is a pure
+  function over text a provider already returned, so it needs neither a
+  live model nor a mocked SDK internal. It exists as the regression test
+  for a real bug (an empty completion being returned as if it were an
+  answer, silently dropping every tool call) - the provider classes
+  wrapped around it still need the live-service test described above.
+  `database.py`'s CRUD methods
   (`find_one`/`insert_one`/`update_one`) are still `NotImplementedError`
   stubs (see the file's `TODO`s); there's nothing to test there yet -
   `connect`/`close` are real but have no dedicated test either, same gap
