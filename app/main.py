@@ -20,6 +20,7 @@ from agent.internal.graph import AgentError
 from agents.api.router import router as agents_router
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from tool.api.router import router as tool_router
 
 from app.errors import handle_agent_error, handle_not_implemented, handle_platform_error
@@ -46,6 +47,28 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ai-agent-platform", lifespan=lifespan)
+
+# Comma-separated allowlist of origins allowed to call this API
+# cross-origin - e.g. a frontend hosted on a different domain during local
+# development (lovable.app, a dev server on another port, ...). Without
+# this middleware, every browser request from such an origin fails with a
+# CORS error before it ever reaches a route handler. "*" (the default)
+# allows any origin; allow_credentials stays False to keep that default
+# spec-compliant - browsers reject Access-Control-Allow-Credentials: true
+# paired with a wildcard Access-Control-Allow-Origin. Set
+# APP_CORS_ORIGINS to a real allowlist (and allow_credentials=True below,
+# if needed) once this API is called with cookies/credentials.
+_cors_origins = [
+    origin.strip() for origin in os.getenv("APP_CORS_ORIGINS", "*").split(",") if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.add_exception_handler(AgentError, handle_agent_error)
 app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
