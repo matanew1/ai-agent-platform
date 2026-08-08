@@ -40,6 +40,18 @@ class FakeEmbedder:
         return [float(len(text)), 1.0]
 
 
+class FakeLLMProvider:
+    """Fake satisfying rag.internal.ports.LLMProvider."""
+
+    def __init__(self, response: str = "[]") -> None:
+        self._response = response
+        self.prompts: list[str] = []
+
+    async def generate(self, prompt: str, max_tokens: int | None = None) -> str:
+        self.prompts.append(prompt)
+        return self._response
+
+
 def _make_rag_service() -> tuple[RAGService, FakeVectorStore]:
     vector_store = FakeVectorStore()
     return RAGService(vector_store=vector_store, embedder=FakeEmbedder()), vector_store
@@ -52,6 +64,70 @@ async def test_search_embeds_the_query_and_searches_the_vector_store() -> None:
 
     assert [chunk.text for chunk in chunks] == ["context"]
     assert vector_store.embedding == [31.0, 1.0]
+    assert vector_store.top_k == 3
+
+
+async def test_search_without_an_llm_never_widens_the_candidate_search() -> None:
+    """No llm configured means no reranking, and no behavior change from
+    before reranking existed - same top_k in, same top_k asked of the
+    vector store.
+    """
+    vector_store = FakeVectorStore()
+    rag_service = RAGService(vector_store=vector_store, embedder=FakeEmbedder())
+
+    await rag_service.search("query", top_k=3)
+
+    assert vector_store.top_k == 3
+
+
+async def test_search_with_an_llm_fetches_a_wider_candidate_set_and_reranks() -> None:
+    vector_store = FakeVectorStore()
+    llm = FakeLLMProvider(response="[]")
+    rag_service = RAGService(vector_store=vector_store, embedder=FakeEmbedder(), llm=llm)
+
+    await rag_service.search("query", top_k=3)
+
+    # _MIN_RERANK_CANDIDATES (10) wins over top_k * _RERANK_CANDIDATE_MULTIPLIER (12)
+    # only once top_k is small enough - top_k=3 * 4 = 12 already clears the floor.
+    assert vector_store.top_k == 12
+    assert len(llm.prompts) == 1
+
+
+async def test_search_with_an_llm_still_honors_top_k_below_the_candidate_floor() -> None:
+    vector_store = FakeVectorStore()
+    llm = FakeLLMProvider(response="[]")
+    rag_service = RAGService(vector_store=vector_store, embedder=FakeEmbedder(), llm=llm)
+
+    await rag_service.search("query", top_k=1)
+
+    # top_k * 4 == 4, below _MIN_RERANK_CANDIDATES (10) - the floor applies.
+    assert vector_store.top_k == 10
+
+
+async def test_rerank_false_skips_reranking_even_with_an_llm_configured() -> None:
+    """Per-call opt-out: an llm being configured doesn't force every
+    search to pay reranking's latency.
+    """
+    vector_store = FakeVectorStore()
+    llm = FakeLLMProvider(response="[]")
+    rag_service = RAGService(vector_store=vector_store, embedder=FakeEmbedder(), llm=llm)
+
+    await rag_service.search("query", top_k=3, rerank=False)
+
+    assert vector_store.top_k == 3
+    assert llm.prompts == []
+
+
+async def test_rerank_true_without_an_llm_configured_does_not_raise() -> None:
+    """Asking for reranking is never an error just because the service
+    wasn't given an llm - it silently no-ops to plain vector search.
+    """
+    vector_store = FakeVectorStore()
+    rag_service = RAGService(vector_store=vector_store, embedder=FakeEmbedder())
+
+    chunks = await rag_service.search("query", top_k=3, rerank=True)
+
+    assert [chunk.text for chunk in chunks] == ["context"]
     assert vector_store.top_k == 3
 
 

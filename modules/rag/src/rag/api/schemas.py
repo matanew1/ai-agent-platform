@@ -28,6 +28,14 @@ class SearchRequest(BaseModel):
 
     query: str
     top_k: int = Field(default=5, gt=0)
+    rerank: bool = Field(
+        default=True,
+        description=(
+            "Rerank vector-search candidates with the configured LLM before "
+            "returning top_k. No-ops to plain vector search if the server has "
+            "no LLM configured for reranking (RAG_RERANK=false) - never an error."
+        ),
+    )
 
 
 class SearchResponse(BaseModel):
