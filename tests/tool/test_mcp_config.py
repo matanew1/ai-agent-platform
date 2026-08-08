@@ -13,7 +13,12 @@ def test_load_servers_finds_the_fetch_server() -> None:
     servers = load_servers()
 
     commands = [(s.command, s.args) for s in servers]
-    assert ("uvx", ["--with", "mcp==1.9.4", "mcp-server-fetch"]) in commands
+    assert (
+        "/opt/homebrew/bin/uvx",
+        ["--with", "mcp==1.9.4", "mcp-server-fetch"],
+    ) in commands
+    fetch_server = next(server for server in servers if server.args[-1] == "mcp-server-fetch")
+    assert fetch_server.env == {"PATH": "/usr/bin:/bin"}
 
 
 def test_load_servers_finds_the_duckduckgo_server() -> None:

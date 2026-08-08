@@ -29,8 +29,17 @@ fetch:
   # stdio/JSON-RPC, so their mcp package versions don't need to match -
   # only the subprocess's own install needs one new enough to have
   # `McpError`.
-  command: uvx
+  command: /opt/homebrew/bin/uvx
   args: ["--with", "mcp==1.9.4", "mcp-server-fetch"]
+  # mcp-server-fetch's optional Readability.js path runs ``npm install`` on
+  # first use. Its child inherits the MCP process's stdout and corrupts the
+  # newline-delimited JSON-RPC stream with npm progress messages. Hiding
+  # Node/npm from this server's PATH makes it use its reliable Python-only
+  # extractor instead. StdioServerParameters merges this over the normal
+  # inherited environment. Use uvx's absolute macOS path because the narrowed
+  # PATH intentionally cannot resolve it.
+  env:
+    PATH: "/usr/bin:/bin"
   #
   # Worth knowing, since it looks like a broken tool and isn't: this server
   # defaults to `raw: false`, converting the page to markdown - and that
