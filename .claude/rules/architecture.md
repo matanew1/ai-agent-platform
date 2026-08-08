@@ -28,12 +28,15 @@ modules/                    — uv workspace members, one installable package ea
                                Each follows the same internal layout — see
                                "Module-internal layout" below:
     agent/src/agent/
-        service.py             — the module's one public entry point (AgentService)
-        api/                    — HTTP surface: router.py (POST /chat,
-                                   POST /chat/stream), schemas.py
+        service.py             — private/admin workflow implementation (AgentService)
         internal/               — ports.py; graph.py (state, the LangGraph
                                    workflow, AgentError); prompts.py (large
                                    enough - 3 templates - to earn its own file)
+    agents/src/agents/
+        service.py             — public versioned agent-definition service
+        runtime.py             — per-definition compiled AgentService cache
+        api/                    — HTTP surface: /agents definition, document,
+                                   chat, and streaming routes
     rag/src/rag/
         service.py             — the module's one public entry point (RAGService)
         api/                    — HTTP surface: router.py (POST /rag/documents,
@@ -94,7 +97,7 @@ shared/                     — cross-cutting types + logic used by 2+ packages
                                  app/main.py — see "Logging" below
 ```
 
-**Implementation status:** `agent`, `rag`, and `tool` are all fully
+**Implementation status:** private `agent`, public `agents`, `rag`, and `tool` are all fully
 implemented - real LangGraph nodes calling a real LLM, real retrieval/
 ingestion against a real Qdrant collection, and a real local tool registry
 (pdf/markdown extraction) - none of it mocked in tests. All three are
@@ -343,7 +346,7 @@ now with two real implementations in `infrastructure/llm.py` -
 `ChatMistralAI`) - selected by `LLM_PROVIDER` in `app/lifespan.py`. Neither
 imports `agent`, `agent.internal.graph` never imports `infrastructure`,
 and both work end to end verified live: a real Ollama server and the real
-Mistral API each answered the same `POST /chat` request correctly, with
+Mistral API each answered the same agent workflow request correctly, with
 `agent.internal.graph` unchanged either way.
 
 Use `typing.Protocol` for ports by default (structural typing, no inheritance
@@ -375,7 +378,7 @@ implementation, not just a shared shape.
   (`MongoDatabase`, `RedisSessionStore`, `QdrantVectorStore`,
   `OllamaProvider`) and injects them into module services (`RAGService`,
   `AgentService`, ...) via their constructors. The result is attached to
-  `app.state` (e.g. `app.state.agent_service`) and route handlers read it
+  `app.state` (e.g. `app.state.agent_runtime_factory`) and route handlers read it
   from `request.app.state` — routes never construct a service themselves.
   There is no separate `app/container.py`; introduce one only if `lifespan`
   actually gets unwieldy, not preemptively.
@@ -389,16 +392,16 @@ implementation, not just a shared shape.
   matters most for `AgentService`: its constructor builds an `AgentGraph`
   and **compiles** it twice - once as the full workflow (`compile()`, used
   by `run()`) and once as everything up to `generate_answer`
-  (`compile_prefix()`, used by `run_stream()` for `POST /chat:stream` - see
+  (`compile_prefix()`, used by `run_stream()` for public agent streaming - see
   `agent.internal.graph.AgentGraph`'s docstring for why streaming needs a
   second compiled form rather than a flag on the first). Neither compile
   must ever happen per chat call, only once at startup. Nothing in the
-  request path (`agent.api.router.chat`/`chat_stream`, `AgentService.run`/
-  `run_stream`) constructs anything; the router only reads
-  `request.app.state.agent_service`. Verified, not just asserted: booting
+  request path (`agents.api.router`, `AgentService.run`/`run_stream`)
+  constructs anything; the router reads the configured runtime factory from
+  `request.app.state`. Verified, not just asserted: booting
   the app with `LOG_LEVEL=DEBUG` shows `"AgentService + LangGraph workflow
   built once for this process"` exactly once at startup, and it does not
-  appear again when a `POST /chat` or `POST /chat:stream` request is
+  appear again when an agent chat or streaming request is
   handled afterward.
 
 ## Avoiding over-engineering

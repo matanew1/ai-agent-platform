@@ -1,4 +1,4 @@
-"""Cached runtime construction for versioned user-owned agents."""
+"""Cached runtime construction for versioned customizable agents."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class AgentScopedRetriever:
 
 
 class AgentRuntimeFactory:
-    """Build one compiled runtime per agent definition version."""
+    """Build one compiled runtime per agent-definition version."""
 
     def __init__(self, **dependencies: object) -> None:
         self._dependencies = dependencies

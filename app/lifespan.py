@@ -20,14 +20,15 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from agent.service import AgentDefinitionService, AgentService
+from agent.service import AgentService
+from agents.runtime import AgentRuntimeFactory
+from agents.service import AgentDefinitionService
 from fastapi import FastAPI
 from rag.service import RAGService
 from tool.mcp.config import load_servers
 from tool.registry import ToolRegistry
 from tool.tools import markdown, pdf
 
-from app.agent_runtime import AgentRuntimeFactory
 from infrastructure.agent_definitions import MongoAgentDefinitionRepository
 from infrastructure.database import MongoDatabase
 from infrastructure.llm import MistralProvider, OllamaEmbedder, OllamaProvider

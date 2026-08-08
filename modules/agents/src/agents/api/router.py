@@ -1,28 +1,23 @@
-"""HTTP endpoints for caller-scoped agent definitions.
-
-Authentication is deliberately not configured yet.  Callers provide an
-``owner_id`` so their agent definitions, documents, and sessions remain
-separate during local development.
-"""
+"""HTTP routes for caller-scoped customizable agents."""
 
 from __future__ import annotations
 
 import json
 
-from agent.api.schemas import (
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+from rag.api.schemas import IngestDocumentRequest, IngestDocumentResponse
+from rag.service import RAGService
+
+from agents.api.schemas import (
     AgentResponse,
     ChatRequest,
     ChatResponse,
     CreateAgentRequest,
     UpdateAgentRequest,
 )
-from agent.service import AgentDefinitionService
-from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
-from rag.api.schemas import IngestDocumentRequest, IngestDocumentResponse
-from rag.service import RAGService
-
-from app.agent_runtime import AgentRuntimeFactory
+from agents.runtime import AgentRuntimeFactory
+from agents.service import AgentDefinitionService
 from shared.types import AgentDefinition
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -50,10 +45,7 @@ def _scoped_session_id(owner_id: str, agent_id: str, session_id: str) -> str:
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
-async def create_agent(
-    payload: CreateAgentRequest,
-    request: Request,
-) -> AgentResponse:
+async def create_agent(payload: CreateAgentRequest, request: Request) -> AgentResponse:
     """Create an agent definition scoped to the caller-supplied owner id."""
     definitions: AgentDefinitionService = request.app.state.agent_definition_service
     try:
@@ -68,35 +60,22 @@ async def create_agent(
 
 
 @router.get("", response_model=list[AgentResponse])
-async def list_agents(
-    request: Request,
-    owner_id: str,
-) -> list[AgentResponse]:
+async def list_agents(request: Request, owner_id: str) -> list[AgentResponse]:
     """List agent definitions for the supplied owner id."""
     definitions: AgentDefinitionService = request.app.state.agent_definition_service
     return [_agent_response(definition) for definition in await definitions.list(owner_id)]
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-async def get_agent(
-    agent_id: str,
-    request: Request,
-    owner_id: str,
-) -> AgentResponse:
+async def get_agent(agent_id: str, request: Request, owner_id: str) -> AgentResponse:
     """Get one agent definition for the supplied owner id."""
-    definitions: AgentDefinitionService = request.app.state.agent_definition_service
-    definition = await definitions.get(owner_id, agent_id)
-    if definition is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    definition = await _owned_definition(request, owner_id, agent_id)
     return _agent_response(definition)
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)
 async def update_agent(
-    agent_id: str,
-    payload: UpdateAgentRequest,
-    request: Request,
-    owner_id: str,
+    agent_id: str, payload: UpdateAgentRequest, request: Request, owner_id: str
 ) -> AgentResponse:
     """Update an owned definition and advance its configuration version."""
     definitions: AgentDefinitionService = request.app.state.agent_definition_service
@@ -114,11 +93,7 @@ async def update_agent(
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_agent(
-    agent_id: str,
-    request: Request,
-    owner_id: str,
-) -> None:
+async def delete_agent(agent_id: str, request: Request, owner_id: str) -> None:
     """Delete an agent definition belonging to the supplied owner id."""
     definitions: AgentDefinitionService = request.app.state.agent_definition_service
     if not await definitions.delete(owner_id, agent_id):
@@ -148,10 +123,7 @@ async def ingest_agent_document(
 
 @router.post("/{agent_id}/chat", response_model=ChatResponse)
 async def chat_with_agent(
-    agent_id: str,
-    payload: ChatRequest,
-    request: Request,
-    owner_id: str,
+    agent_id: str, payload: ChatRequest, request: Request, owner_id: str
 ) -> ChatResponse:
     """Run a chat turn against the caller's configured agent runtime."""
     definition = await _owned_definition(request, owner_id, agent_id)
@@ -172,10 +144,7 @@ async def chat_with_agent(
 
 @router.post("/{agent_id}/chat/stream")
 async def stream_with_agent(
-    agent_id: str,
-    payload: ChatRequest,
-    request: Request,
-    owner_id: str,
+    agent_id: str, payload: ChatRequest, request: Request, owner_id: str
 ) -> StreamingResponse:
     """Stream a response from the caller's configured agent runtime."""
     definition = await _owned_definition(request, owner_id, agent_id)

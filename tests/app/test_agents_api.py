@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from agent.service import AgentDefinitionService
+from agents.api.router import router
+from agents.service import AgentDefinitionService
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.agents import router
 from shared.types import AgentDefinition, ToolDefinition
 
 

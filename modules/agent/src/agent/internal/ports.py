@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
-from shared.types import AgentDefinition, Chunk, SessionCheckpoint, ToolDefinition, ToolResult
+from shared.types import Chunk, SessionCheckpoint, ToolDefinition, ToolResult
 
 
 class LLMProvider(Protocol):
@@ -37,11 +37,11 @@ class LLMProvider(Protocol):
     def generate_stream(self, prompt: str) -> AsyncIterator[str]:
         """Generate a completion for a prompt, yielding it token-by-token.
 
-        Used only by ``AgentService.run_stream`` for ``POST /chat/stream`` -
+        Used only by ``AgentService.run_stream`` -
         every other caller (the graph's nodes) wants the full string back
         from ``generate`` and would gain nothing from streaming it. See
         ``.claude/rules/api-conventions.md`` on why streaming gets its own
-        endpoint rather than a flag on ``POST /chat``.
+        endpoint rather than a flag on a normal chat request.
 
         Args:
             prompt: Fully-rendered prompt text.
@@ -120,28 +120,4 @@ class Memory(Protocol):
             An async context manager; entering it may block until the
             lock is free, and raises if that wait times out.
         """
-        ...
-
-
-class AgentDefinitionRepository(Protocol):
-    """Persistence for user-owned agent definitions."""
-
-    async def create(self, definition: AgentDefinition) -> AgentDefinition:
-        """Persist a new agent definition."""
-        ...
-
-    async def get(self, owner_id: str, agent_id: str) -> AgentDefinition | None:
-        """Fetch one definition only when it belongs to ``owner_id``."""
-        ...
-
-    async def list(self, owner_id: str) -> list[AgentDefinition]:
-        """List definitions belonging to one owner scope."""
-        ...
-
-    async def save(self, definition: AgentDefinition) -> bool:
-        """Persist an updated definition, matched by owner and id."""
-        ...
-
-    async def delete(self, owner_id: str, agent_id: str) -> bool:
-        """Delete one definition belonging to the owner scope."""
         ...

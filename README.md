@@ -28,8 +28,6 @@ ai-agent-platform/
 │   │                       #   handlers, routers) + `run()` entry point
 │   ├── lifespan.py         #   builds infra + services, wires infra -> modules
 │   ├── health.py           #   GET /health (app-level, not module-owned)
-│   ├── agents.py           #   versioned agent-definition + scoped runtime routes
-│   ├── agent_runtime.py    #   cached, agent-specific AgentService instances
 │   └── errors.py           #   exception handlers, registered from main.py
 │
 ├── modules/                 # uv workspace members - one package each.
@@ -37,10 +35,13 @@ ai-agent-platform/
 │   │                        # point at its root, internal/ for everything
 │   │                        # supporting it - see architecture.md
 │   ├── agent/src/agent/
-│   │   ├── service.py      #   AgentService - the module's public entry point
-│   │   ├── api/            #   POST /chat + POST /chat/stream: router.py + schemas.py
+│   │   ├── service.py      #   private/admin workflow implementation
 │   │   └── internal/       #   ports.py, graph.py (state, the LangGraph
 │   │                       #   workflow, AgentError), prompts.py
+│   ├── agents/src/agents/  #   public customizable-agent module
+│   │   ├── service.py      #   versioned definition CRUD + tool validation
+│   │   ├── runtime.py      #   per-definition compiled runtime cache
+│   │   └── api/            #   /agents definition, document, chat, stream routes
 │   ├── rag/src/rag/
 │   │   ├── service.py      #   RAGService - the module's public entry point
 │   │   ├── api/            #   POST /rag/documents, /documents/file, /search
@@ -100,7 +101,7 @@ why that's not the same as `agent` importing `infrastructure`.
 - `app/lifespan.py` is the only file allowed to import across more than one
   of `modules/*` and `infrastructure/*` - it constructs adapters and
   injects them into module services once, at startup. `app/main.py` just
-  wires that in and mounts each module's router (e.g. `agent.api.router`);
+  wires that in and mounts each module's router (e.g. `agents.api.router`);
   it, `app/errors.py`, `app/health.py`, and each module's `api.py` import
   from at most one module, not across the boundary.
 - `agent` and `rag` depend only on `typing.Protocol` ports they own
@@ -141,13 +142,10 @@ read `.env`, and until that call was added every value in it was silently
 inert, which is how `OLLAMA_REASONING=false` failed to apply and broke tool
 calling outright (see "Performance notes" below). `GET /health` always works.
 `POST /rag/documents` (JSON text) and `POST /rag/documents/file` (multipart
-txt/pdf/docx upload) index a document; `POST /rag/search` finds relevant
-chunks; `POST /chat` runs the full agent workflow (retrieve, run tools,
-answer) end to end against whatever's been indexed. `POST
-/chat/stream` runs the identical workflow but streams the final answer
-back as plain text as it's generated, instead of waiting for the whole
-thing - see [`api-conventions.md`](.claude/rules/api-conventions.md) on
-why that's a separate endpoint rather than a flag on `POST /chat`.
+txt/pdf/docx upload) index general RAG data; `POST /rag/search` finds
+relevant chunks. Public conversations use a configurable agent at
+`POST /agents/{agent_id}/chat`, with a separate
+`/agents/{agent_id}/chat/stream` endpoint for streaming output.
 
 ### Multiple customizable agents
 
@@ -257,8 +255,8 @@ Redis is the single shared source of truth. Two things specific to a
   save sequence in `AgentService.run`/`run_stream`. Without it, two
   concurrent requests could both read the same starting history and then
   both save, with whichever save lands last silently discarding the
-  other's turn - verified live by firing two concurrent `POST /chat`
-  requests at one `session_id` and confirming both turns land in the
+  other's turn - verified live by firing two concurrent agent-chat requests
+  at one `session_id` and confirming both turns land in the
   final Redis-stored history, not just one.
 - Session checkpoints carry a 7-day TTL (`_SESSION_TTL_SECONDS`,
   `infrastructure/redis.py`), refreshed on every save, so an abandoned

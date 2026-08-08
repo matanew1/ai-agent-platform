@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.service import AgentDefinitionService
+from agents.service import AgentDefinitionService
 
 from shared.types import AgentDefinition, ToolDefinition
 
