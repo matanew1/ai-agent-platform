@@ -14,3 +14,14 @@ def test_load_servers_finds_the_fetch_server() -> None:
 
     commands = [(s.command, s.args) for s in servers]
     assert ("uvx", ["--with", "mcp==1.9.4", "mcp-server-fetch"]) in commands
+
+
+def test_load_servers_finds_the_duckduckgo_server() -> None:
+    """The free search server should be launched from its pinned package."""
+    servers = load_servers()
+
+    commands = [(s.command, s.args) for s in servers]
+    assert (
+        "uvx",
+        ["--with", "mcp==1.9.4", "--from", "ddg-mcp==0.1.1", "ddg-mcp"],
+    ) in commands
