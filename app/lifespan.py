@@ -20,13 +20,15 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from agent.service import AgentService
+from agent.service import AgentDefinitionService, AgentService
 from fastapi import FastAPI
 from rag.service import RAGService
 from tool.mcp.config import load_servers
 from tool.registry import ToolRegistry
 from tool.tools import markdown, pdf
 
+from app.agent_runtime import AgentRuntimeFactory
+from infrastructure.agent_definitions import MongoAgentDefinitionRepository
 from infrastructure.database import MongoDatabase
 from infrastructure.llm import MistralProvider, OllamaEmbedder, OllamaProvider
 from infrastructure.qdrant import QdrantVectorStore
@@ -153,6 +155,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             tool_registry = await tool_registry.register_mcp(server_params, mcp_exit_stack)
 
         logger.debug("Tool registry ready: %s", [t.name for t in tool_registry.get_tools()])
+        agent_definition_service = AgentDefinitionService(
+            repository=MongoAgentDefinitionRepository(database),
+            tool_registry=tool_registry,
+        )
 
         # SECTION 4 - Build module services, injecting the infrastructure and
         # registry built above through their constructors. AgentService.__init__
@@ -175,6 +181,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             memory=memory,
             tool_registry=tool_registry,
         )
+        agent_runtime_factory = AgentRuntimeFactory(
+            llm=llm,
+            retriever=rag_service,
+            memory=memory,
+            tool_registry=tool_registry,
+        )
         logger.info("AgentService + LangGraph workflow built once for this process")
 
         # SECTION 5 - Expose services to route handlers via app.state - see
@@ -182,6 +194,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.tool_registry = tool_registry
         app.state.rag_service = rag_service
         app.state.agent_service = agent_service
+        app.state.agent_definition_service = agent_definition_service
+        app.state.agent_runtime_factory = agent_runtime_factory
 
         # SECTION 6 - Hand control back to FastAPI; it serves requests until
         # shutdown, then execution falls through to teardown below.

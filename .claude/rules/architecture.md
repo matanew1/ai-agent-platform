@@ -99,11 +99,9 @@ implemented - real LangGraph nodes calling a real LLM, real retrieval/
 ingestion against a real Qdrant collection, and a real local tool registry
 (pdf/markdown extraction) - none of it mocked in tests. All three are
 additionally verified against live services, not just unit-tested.
-`infrastructure/database.py`'s CRUD methods
-(`find_one`/`insert_one`/`update_one`) are the one remaining
-`NotImplementedError` scaffold - nothing in the current request path calls
-them; `connect`/`close` are real, as are `infrastructure/{redis,qdrant,llm}.py`
-in full.
+`infrastructure/database.py` provides the complete CRUD surface used by
+agent-definition persistence and verifies MongoDB availability with a startup
+ping. `infrastructure/{redis,qdrant,llm}.py` are likewise fully implemented.
 
 **Reranking:** `RAGService.search` optionally reranks a wider
 vector-search candidate set with an LLM before returning `top_k` -

@@ -8,7 +8,11 @@ the internal representation are allowed to change independently. See
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
+
+from agent.internal.prompts import SYSTEM_PROMPT
 
 
 class ChatRequest(BaseModel):
@@ -57,3 +61,36 @@ class ChatResponse(BaseModel):
     execution_time_seconds: float
     tools_invoked: list[str] = Field(default_factory=list)
     chunks_retrieved: int = 0
+
+
+class CreateAgentRequest(BaseModel):
+    """Fields for a new customizable agent.
+
+    ``owner_id`` is a development-only caller scope while authentication is
+    disabled. It must come from a verified identity once auth is introduced.
+    """
+
+    owner_id: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=100)
+    system_prompt: str = Field(default=SYSTEM_PROMPT, min_length=1, max_length=8_000)
+    allowed_tools: list[str] = Field(default_factory=list)
+
+
+class UpdateAgentRequest(BaseModel):
+    """User-editable fields for an existing customizable agent."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    system_prompt: str | None = Field(default=None, min_length=1, max_length=8_000)
+    allowed_tools: list[str] | None = None
+
+
+class AgentResponse(BaseModel):
+    """A persisted user-owned agent configuration."""
+
+    id: str
+    name: str
+    system_prompt: str
+    allowed_tools: list[str]
+    version: int
+    created_at: datetime
+    updated_at: datetime

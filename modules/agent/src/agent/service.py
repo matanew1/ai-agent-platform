@@ -6,14 +6,104 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from agent.internal.graph import AgentError, AgentGraph, AgentState
-from agent.internal.ports import LLMProvider, Memory, Retriever, ToolRegistry
+from agent.internal.ports import (
+    AgentDefinitionRepository,
+    LLMProvider,
+    Memory,
+    Retriever,
+    ToolRegistry,
+)
 from agent.internal.prompts import GENERATE_ANSWER_PROMPT_TEMPLATE, SYSTEM_PROMPT
 from shared.prompt_formatters import format_context, format_history, format_tool_results
-from shared.types import ChatMessage, SessionCheckpoint
+from shared.types import AgentDefinition, ChatMessage, SessionCheckpoint
 
 MAX_HISTORY_MESSAGES = 40
+
+
+class AgentDefinitionService:
+    """Manage versioned agent configuration in caller-provided owner scopes."""
+
+    def __init__(
+        self, repository: AgentDefinitionRepository, tool_registry: ToolRegistry
+    ) -> None:
+        self._repository = repository
+        self._tool_registry = tool_registry
+
+    async def create(
+        self, owner_id: str, name: str, system_prompt: str, allowed_tools: list[str]
+    ) -> AgentDefinition:
+        """Create a user-owned agent definition after validating its tools."""
+        self._validate_tools(allowed_tools)
+        return await self._repository.create(
+            AgentDefinition(
+                owner_id=owner_id,
+                name=name,
+                system_prompt=system_prompt,
+                allowed_tools=allowed_tools,
+            )
+        )
+
+    async def get(self, owner_id: str, agent_id: str) -> AgentDefinition | None:
+        """Get a definition only if the requesting user owns it."""
+        return await self._repository.get(owner_id, agent_id)
+
+    async def list(self, owner_id: str) -> list[AgentDefinition]:
+        """List all definitions owned by one user."""
+        return await self._repository.list(owner_id)
+
+    async def update(
+        self,
+        owner_id: str,
+        agent_id: str,
+        *,
+        name: str | None = None,
+        system_prompt: str | None = None,
+        allowed_tools: list[str] | None = None,
+    ) -> AgentDefinition | None:
+        """Apply a partial update and increment the definition version."""
+        definition = await self._repository.get(owner_id, agent_id)
+        if definition is None:
+            return None
+        if allowed_tools is not None:
+            self._validate_tools(allowed_tools)
+
+        changes = {
+            key: value
+            for key, value in {
+                "name": name,
+                "system_prompt": system_prompt,
+                "allowed_tools": allowed_tools,
+            }.items()
+            if value is not None
+        }
+        if not changes:
+            return definition
+        updated = definition.model_copy(
+            update={
+                **changes,
+                "version": definition.version + 1,
+                "updated_at": datetime.now(UTC),
+            }
+        )
+        await self._repository.save(updated)
+        return updated
+
+    async def delete(self, owner_id: str, agent_id: str) -> bool:
+        """Delete a definition only if the user owns it."""
+        return await self._repository.delete(owner_id, agent_id)
+
+    def _validate_tools(self, allowed_tools: list[str]) -> None:
+        """Reject duplicate and unavailable tools before saving configuration."""
+        duplicates = {name for name in allowed_tools if allowed_tools.count(name) > 1}
+        if duplicates:
+            raise ValueError(f"Duplicate tool names are not allowed: {sorted(duplicates)}")
+        registered_tools = {tool.name for tool in self._tool_registry.get_tools()}
+        unknown_tools = sorted(set(allowed_tools) - registered_tools)
+        if unknown_tools:
+            raise ValueError(f"Unknown tool names: {unknown_tools}")
 
 
 @dataclass
@@ -96,6 +186,7 @@ class AgentService:
         retriever: Retriever,
         memory: Memory,
         tool_registry: ToolRegistry,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         self._memory = memory
         self._llm = llm
@@ -105,7 +196,13 @@ class AgentService:
         # including) generate_answer for run_stream(), which makes that
         # last LLM call itself in streaming mode - see AgentGraph's
         # docstring for why that one step isn't just another graph node.
-        self._agent_graph = AgentGraph(llm=llm, retriever=retriever, tool_registry=tool_registry)
+        self._system_prompt = system_prompt
+        self._agent_graph = AgentGraph(
+            llm=llm,
+            retriever=retriever,
+            tool_registry=tool_registry,
+            system_prompt=system_prompt,
+        )
         self._graph = self._agent_graph.compile()
         self._prefix_graph = self._agent_graph.compile_prefix()
 
@@ -153,7 +250,10 @@ class AgentService:
 
             result = await self._graph.ainvoke(
                 AgentState(
-                    session_id=session_id, input=message, history=history, allowed_tools=tools or []
+                    session_id=session_id,
+                    input=message,
+                    history=history,
+                    allowed_tools=tools or [],
                 )
             )
             answer = result.get("answer") if isinstance(result, dict) else None
@@ -248,7 +348,7 @@ class AgentService:
         # method on AgentGraph) so the graph doesn't have to carry a public
         # surface that exists for exactly one external caller.
         prompt = GENERATE_ANSWER_PROMPT_TEMPLATE.format(
-            system_prompt=SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
             history=format_history(history),
             input=message,
             context=format_context(prefix_result.get("context", [])),

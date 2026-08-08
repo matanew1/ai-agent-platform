@@ -48,12 +48,18 @@ class LLMProvider(Protocol):
 class VectorStore(Protocol):
     """A vector store capable of similarity search and indexing."""
 
-    async def search(self, embedding: list[float], top_k: int = 5) -> list[Chunk]:
+    async def search(
+        self,
+        embedding: list[float],
+        top_k: int = 5,
+        metadata_filter: dict[str, str] | None = None,
+    ) -> list[Chunk]:
         """Find the most similar chunks to a query embedding.
 
         Args:
             embedding: Query vector.
             top_k: Maximum number of results to return.
+            metadata_filter: Exact metadata values every returned chunk must match.
 
         Returns:
             Chunks ordered by descending similarity.

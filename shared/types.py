@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -110,4 +111,22 @@ class SessionCheckpoint(BaseModel):
 
     session_id: str
     history: list[ChatMessage] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class AgentDefinition(BaseModel):
+    """A versioned, user-owned configuration for one conversational agent.
+
+    Runtime services are derived from this persistent definition and cached
+    separately; editing a definition increments ``version`` so a future
+    request cannot reuse a runtime compiled for stale configuration.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    owner_id: str
+    name: str = Field(min_length=1, max_length=100)
+    system_prompt: str = Field(min_length=1, max_length=8_000)
+    allowed_tools: list[str] = Field(default_factory=list)
+    version: int = Field(default=1, ge=1)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

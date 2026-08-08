@@ -38,7 +38,12 @@ class QdrantVectorStore:
         self._client = AsyncQdrantClient(url=url)
         logger.debug("QdrantVectorStore configured: url=%r collection=%r", url, collection_name)
 
-    async def search(self, embedding: list[float], top_k: int = 5) -> list[Chunk]:
+    async def search(
+        self,
+        embedding: list[float],
+        top_k: int = 5,
+        metadata_filter: dict[str, str] | None = None,
+    ) -> list[Chunk]:
         """Find the most similar chunks to a query embedding.
 
         Args:
@@ -66,6 +71,7 @@ class QdrantVectorStore:
                 query=embedding,
                 limit=top_k,
                 with_payload=True,
+                query_filter=_metadata_filter(metadata_filter),
             )
         except Exception as exc:
             raise QdrantError(
@@ -137,3 +143,15 @@ class QdrantVectorStore:
             raise QdrantError(
                 f"Failed to ensure collection {self._collection_name!r}: {exc}"
             ) from exc
+
+
+def _metadata_filter(values: dict[str, str] | None) -> models.Filter | None:
+    """Translate exact chunk metadata requirements into a Qdrant filter."""
+    if not values:
+        return None
+    return models.Filter(
+        must=[
+            models.FieldCondition(key=f"metadata.{key}", match=models.MatchValue(value=value))
+            for key, value in values.items()
+        ]
+    )

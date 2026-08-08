@@ -2,6 +2,8 @@
 
 A modular-monolith AI agent platform: FastAPI + LangGraph agent orchestration,
 RAG retrieval, and a local tool registry, backed by MongoDB, Redis, and Qdrant.
+It supports multiple versioned agent configurations, each with its own system
+prompt, tool allowlist, document scope, and conversation sessions.
 
 **`agent`, `rag`, and `tool` are all fully implemented** - a real LangGraph
 workflow ([`retrieve_context` ∥ `execute_tools`] → `generate_answer`; the
@@ -11,13 +13,11 @@ collection (ingest via `POST /rag/documents`/`POST /rag/documents/file`,
 search via `POST /rag/search`), and a real tool registry (local pdf/markdown
 extraction, plus a `fetch` tool adapted from the external Fetch MCP server).
 All three are verified against live services, not just unit
-tests - see "How to run" below. **`infrastructure/database.py`'s CRUD
-methods** (`find_one`/`insert_one`/`update_one`) are the one remaining
-scaffold - nothing in the current request path calls them, so nothing is
-actually blocked on it; `connect`/`close` are real. See `.claude/rules/` for
+tests - see "How to run" below. MongoDB CRUD and startup health checks are
+implemented and power persisted agent definitions. See `.claude/rules/` for
 the conventions this project follows, `CLAUDE.md` for the project-wide
-summary, and [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog +
-Semantic Versioning) for release history.
+summary, and [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog + Semantic
+Versioning) for release history.
 
 ## Project structure
 
@@ -28,6 +28,8 @@ ai-agent-platform/
 │   │                       #   handlers, routers) + `run()` entry point
 │   ├── lifespan.py         #   builds infra + services, wires infra -> modules
 │   ├── health.py           #   GET /health (app-level, not module-owned)
+│   ├── agents.py           #   versioned agent-definition + scoped runtime routes
+│   ├── agent_runtime.py    #   cached, agent-specific AgentService instances
 │   └── errors.py           #   exception handlers, registered from main.py
 │
 ├── modules/                 # uv workspace members - one package each.
@@ -54,6 +56,7 @@ ai-agent-platform/
 │
 ├── infrastructure/          # Concrete adapters - the only place that
 │   ├── database.py         # imports MongoDB/Redis/Qdrant/LLM SDKs directly
+│   ├── agent_definitions.py# persisted versioned agent configurations
 │   ├── redis.py
 │   ├── qdrant.py
 │   └── llm.py              # OllamaProvider + MistralProvider (generate +
@@ -145,6 +148,41 @@ answer) end to end against whatever's been indexed. `POST
 back as plain text as it's generated, instead of waiting for the whole
 thing - see [`api-conventions.md`](.claude/rules/api-conventions.md) on
 why that's a separate endpoint rather than a flag on `POST /chat`.
+
+### Multiple customizable agents
+
+The `/agents` routes persist configurable agents in MongoDB. Each definition
+has a name, system prompt, and an optional tool allowlist; each update advances
+its version and causes the next request to use a freshly compiled runtime. An
+agent's document retrieval and Redis session IDs are scoped by its `owner_id`
+and `agent_id`, so separate local users and agents do not share context.
+
+Authentication is intentionally disabled for now. `owner_id` is therefore a
+required caller-provided development scope, **not a security boundary**. Do
+not expose these routes publicly until real authentication is restored.
+
+```bash
+# Create a configurable agent.
+curl -X POST http://localhost:8000/agents \
+  -H 'Content-Type: application/json' \
+  -d '{"owner_id":"local-dev","name":"Researcher",\
+       "system_prompt":"Research carefully and cite retrieved context.",\
+       "allowed_tools":[]}'
+
+# List that owner's definitions, then use the returned id in the next calls.
+curl 'http://localhost:8000/agents?owner_id=local-dev'
+
+# Index private context and chat with that one agent.
+curl -X POST 'http://localhost:8000/agents/AGENT_ID/documents?owner_id=local-dev' \
+  -H 'Content-Type: application/json' \
+  -d '{"source_id":"notes","text":"Project notes go here."}'
+curl -X POST 'http://localhost:8000/agents/AGENT_ID/chat?owner_id=local-dev' \
+  -H 'Content-Type: application/json' \
+  -d '{"session_id":"research-1","message":"What do the notes say?"}'
+```
+
+`POST /agents/{agent_id}/chat/stream` accepts the same body and returns the
+answer as `text/plain`; use `curl --no-buffer` to display its live output.
 
 ```bash
 uv run pytest        # run the test suite
