@@ -10,7 +10,11 @@ mocked at the ``ClientSession`` boundary.
 
 from __future__ import annotations
 
-from tool.registry import ToolRegistry
+from contextlib import AsyncExitStack
+
+import pytest
+from mcp import StdioServerParameters
+from tool.registry import RegisteredTool, ToolRegistry
 from tool.tools import markdown, pdf
 
 from shared.types import ToolDefinition
@@ -35,6 +39,45 @@ def test_register_local_makes_tool_visible_in_get_tools() -> None:
     names = [tool.name for tool in registry.get_tools()]
 
     assert names == ["echo"]
+
+
+def test_register_local_returns_the_registry_for_chaining() -> None:
+    """Local registrations can be composed fluently at the app boundary."""
+    registry = ToolRegistry()
+
+    returned_registry = registry.register_local(_make_definition(), _echo)
+
+    assert returned_registry is registry
+
+
+async def test_register_mcp_returns_the_registry_for_chaining(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MCP registrations return the registry after their awaited I/O step."""
+    from tool.mcp.adapter import McpServerAdapter
+
+    registered_tool = RegisteredTool(definition=_make_definition(), handler=_echo)
+
+    class FakeAdapter:
+        """Minimal connected adapter for testing registry composition."""
+
+        async def list_tools(self) -> list[RegisteredTool]:
+            return [registered_tool]
+
+    async def fake_connect(
+        server_params: StdioServerParameters, exit_stack: AsyncExitStack
+    ) -> FakeAdapter:
+        return FakeAdapter()
+
+    monkeypatch.setattr(McpServerAdapter, "connect", fake_connect)
+    registry = ToolRegistry()
+    server_params = StdioServerParameters(command="fake-server")
+
+    async with AsyncExitStack() as exit_stack:
+        returned_registry = await registry.register_mcp(server_params, exit_stack)
+
+    assert returned_registry is registry
+    assert [tool.name for tool in registry.get_tools()] == ["echo"]
 
 
 async def test_call_tool_invokes_the_registered_handler() -> None:

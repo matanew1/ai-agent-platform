@@ -136,9 +136,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # SECTION 3 - Build the tool registry. Local tools are plain
         # functions (tool/tools/*.py) with no registration magic of their
         # own - each is registered explicitly, once, right here.
-        tool_registry = ToolRegistry()
-        tool_registry.register_local(pdf.DEFINITION, pdf.extract_pdf)
-        tool_registry.register_local(markdown.DEFINITION, markdown.extract_markdown)
+        tool_registry = (
+            ToolRegistry()
+            .register_local(pdf.DEFINITION, pdf.extract_pdf)
+            .register_local(markdown.DEFINITION, markdown.extract_markdown)
+        )
 
         # SECTION 3B - Register every external MCP server declared in
         # tool/mcp/mcp-servers.yaml the same explicit way, just awaited
@@ -148,7 +150,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # lifetime and is closed in SECTION 7 alongside the other
         # connections opened in SECTION 2.
         for server_params in load_servers():
-            await tool_registry.register_mcp(server_params, mcp_exit_stack)
+            tool_registry = await tool_registry.register_mcp(server_params, mcp_exit_stack)
 
         logger.debug("Tool registry ready: %s", [t.name for t in tool_registry.get_tools()])
 

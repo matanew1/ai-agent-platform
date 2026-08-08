@@ -9,6 +9,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from typing import Self
 
 from mcp import StdioServerParameters
 
@@ -45,7 +46,7 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, RegisteredTool] = {}
 
-    def register_local(self, definition: ToolDefinition, handler: ToolHandler) -> None:
+    def register_local(self, definition: ToolDefinition, handler: ToolHandler) -> Self:
         """Register one in-process tool - see ``tool/tools/*.py``.
 
         Plain functions, no decorator: a tool file just defines a
@@ -54,7 +55,8 @@ class ToolRegistry:
         ``app/lifespan.py`` (e.g. ``registry.register_local(pdf.DEFINITION,
         pdf.extract_pdf)``) - the same explicit, no-magic shape as
         ``register_mcp`` below, just without the connection step a local
-        tool doesn't need.
+        tool doesn't need. Returns this registry so local registrations can
+        be chained at the composition root.
 
         Args:
             definition: Name/description/parameters, as exposed to the agent.
@@ -62,12 +64,14 @@ class ToolRegistry:
         """
         self._tools[definition.name] = RegisteredTool(definition=definition, handler=handler)
         logger.debug("Registered tool %r", definition.name)
+        return self
 
     async def register_mcp(
         self, server_params: StdioServerParameters, exit_stack: AsyncExitStack
-    ) -> None:
+    ) -> Self:
         """Connect to an external MCP server and register every tool it
-        exposes into this registry.
+        exposes into this registry. Returns this registry after registration
+        so callers can continue a fluent build after awaiting the I/O step.
 
         ``McpServerAdapter`` (imported lazily - ``tool.mcp.adapter`` imports
         this class, so importing it back at module level here would be a
@@ -95,6 +99,7 @@ class ToolRegistry:
             server_params.command,
             server_params.args,
         )
+        return self
 
     def get_tools(self) -> list[ToolDefinition]:
         """List tools currently available to the agent."""
