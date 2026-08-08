@@ -38,9 +38,7 @@ modules/                    — uv workspace members, one installable package ea
         api/                    — HTTP surface: /agents definition, document,
                                    chat, and streaming routes
     rag/src/rag/
-        service.py             — the module's one public entry point (RAGService)
-        api/                    — HTTP surface: router.py (POST /rag/documents,
-                                   /documents/file, /search), schemas.py
+        service.py             — private retrieval implementation (RAGService)
         internal/               — ports.py (Embedder, VectorStore,
                                    LLMProvider); errors.py (RagError);
                                    prompts.py (RERANK_PROMPT_TEMPLATE);
@@ -102,6 +100,8 @@ implemented - real LangGraph nodes calling a real LLM, real retrieval/
 ingestion against a real Qdrant collection, and a real local tool registry
 (pdf/markdown extraction) - none of it mocked in tests. All three are
 additionally verified against live services, not just unit-tested.
+The public `agents` module owns all HTTP endpoints; singular `agent` and
+`rag` are private implementations used by that module and by private tests.
 `infrastructure/database.py` provides the complete CRUD surface used by
 agent-definition persistence and verifies MongoDB availability with a startup
 ping. `infrastructure/{redis,qdrant,llm}.py` are likewise fully implemented.
@@ -129,7 +129,7 @@ Two levers control it, at different scopes:
   `llm` into `RAGService` at all. `false` means reranking is never even
   attempted, at zero latency cost, useful for a deployment where
   vector-search speed matters more than the accuracy this adds.
-- `rerank` (a `RAGService.search`/`POST /rag/search` parameter, default
+- `rerank` (a `RAGService.search` parameter, default
   `true`) - a per-call opt-out once the capability exists. Requesting
   `rerank=True` when the process has no `llm` configured never raises -
   it silently no-ops to plain vector-search order, the same
@@ -338,9 +338,8 @@ happens once, at the composition root (FastAPI app startup / DI container) —
 not inside the module that consumes it.
 
 This isn't just illustrative - `rag`/`QdrantVectorStore` work exactly this
-way in the running code, verified live (`POST /rag/documents` then `POST
-/rag/search` against a real Qdrant collection returns real ranked
-results). The same pattern holds for `agent.internal.ports.LLMProvider`,
+way in the running code, verified live through agent-scoped document ingestion
+and chat. The same pattern holds for `agent.internal.ports.LLMProvider`,
 now with two real implementations in `infrastructure/llm.py` -
 `OllamaProvider` (local) and `MistralProvider` (remote, via
 `ChatMistralAI`) - selected by `LLM_PROVIDER` in `app/lifespan.py`. Neither

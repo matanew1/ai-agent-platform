@@ -7,9 +7,8 @@
   `modules/agents/src/agents/api/router.py` owns all public `/agents` routes,
   including definition CRUD, document ingestion, chat, and chat streaming.
   It is mounted from `app/main.py` via `app.include_router(agents_router)`.
-  `modules/rag/src/rag/api/router.py` follows the same shape for
-  `POST /rag/documents`, `POST /rag/documents/file`, and `POST /rag/search`.
-  A router imports `fastapi` and module dependencies only - never `app`,
+  The private `agent` and `rag` modules expose no HTTP routes. A public router
+  imports `fastapi` and module dependencies only - never `app`,
   which would invert the one allowed direction (see
   [architecture.md](architecture.md)). It reaches services built at startup through the generic
   `request.app.state` FastAPI gives every handler, not through an import

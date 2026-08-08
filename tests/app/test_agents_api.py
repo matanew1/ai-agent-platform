@@ -62,3 +62,11 @@ def test_agent_routes_require_owner_id_but_no_bearer_token() -> None:
     assert created.status_code == 201
     assert listed.status_code == 200
     assert [agent["name"] for agent in listed.json()] == ["Researcher"]
+
+
+def test_agents_module_exposes_scoped_file_ingestion() -> None:
+    """The public module, not private RAG, owns document-upload routes."""
+    paths = _client().app.openapi()["paths"]
+
+    assert "/agents/{agent_id}/documents/file" in paths
+    assert "/rag/documents/file" not in paths

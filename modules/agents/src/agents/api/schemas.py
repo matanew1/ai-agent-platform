@@ -57,3 +57,19 @@ class AgentResponse(BaseModel):
     version: int
     created_at: datetime
     updated_at: datetime
+
+
+class IngestDocumentRequest(BaseModel):
+    """Text document content to add to one agent's knowledge base."""
+
+    source_id: str
+    text: str
+    chunk_size: int = Field(default=500, gt=0)
+    chunk_overlap: int = Field(default=50, ge=0)
+
+
+class IngestDocumentResponse(BaseModel):
+    """Result of indexing one agent-scoped document."""
+
+    source_id: str
+    chunks_indexed: int

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
-from rag.api.schemas import IngestDocumentRequest, IngestDocumentResponse
 from rag.service import RAGService
 
 from agents.api.schemas import (
@@ -14,10 +15,13 @@ from agents.api.schemas import (
     ChatRequest,
     ChatResponse,
     CreateAgentRequest,
+    IngestDocumentRequest,
+    IngestDocumentResponse,
     UpdateAgentRequest,
 )
 from agents.runtime import AgentRuntimeFactory
 from agents.service import AgentDefinitionService
+from shared.documents import extract_document_text
 from shared.types import AgentDefinition
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -119,6 +123,35 @@ async def ingest_agent_document(
         metadata={"owner_id": owner_id, "agent_id": agent_id},
     )
     return IngestDocumentResponse(source_id=payload.source_id, chunks_indexed=chunks_indexed)
+
+
+@router.post("/{agent_id}/documents/file", response_model=IngestDocumentResponse)
+async def ingest_agent_file(
+    agent_id: str,
+    request: Request,
+    owner_id: str,
+    file: Annotated[UploadFile, File()],
+    source_id: Annotated[str | None, Form()] = None,
+) -> IngestDocumentResponse:
+    """Extract and index a TXT, PDF, or DOCX file for one agent only."""
+    await _owned_definition(request, owner_id, agent_id)
+    filename = file.filename or "upload"
+    try:
+        text = await asyncio.to_thread(extract_document_text, filename, await file.read())
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(exc),
+        ) from exc
+
+    document_source_id = source_id or filename
+    rag_service: RAGService = request.app.state.rag_service
+    chunks_indexed = await rag_service.ingest_document(
+        text=text,
+        source_id=f"{owner_id}:{agent_id}:{document_source_id}",
+        metadata={"owner_id": owner_id, "agent_id": agent_id},
+    )
+    return IngestDocumentResponse(source_id=document_source_id, chunks_indexed=chunks_indexed)
 
 
 @router.post("/{agent_id}/chat", response_model=ChatResponse)

@@ -2,15 +2,15 @@
 
 A modular-monolith AI agent platform: FastAPI + LangGraph agent orchestration,
 RAG retrieval, and a local tool registry, backed by MongoDB, Redis, and Qdrant.
-It supports multiple versioned agent configurations, each with its own system
-prompt, tool allowlist, document scope, and conversation sessions.
+The public API is the customizable `agents` module. The singular `agent` and
+`rag` modules are private workflow/retrieval implementations used by it and by
+their tests.
 
 **`agent`, `rag`, and `tool` are all fully implemented** - a real LangGraph
 workflow ([`retrieve_context` ∥ `execute_tools`] → `generate_answer`; the
 first two run in parallel, since neither depends on the other's output)
 calling a real local LLM via Ollama, real retrieval against a real Qdrant
-collection (ingest via `POST /rag/documents`/`POST /rag/documents/file`,
-search via `POST /rag/search`), and a real tool registry (local pdf/markdown
+collection through agent-scoped document routes, and a real tool registry (local pdf/markdown
 extraction, plus a `fetch` tool adapted from the external Fetch MCP server).
 All three are verified against live services, not just unit
 tests - see "How to run" below. MongoDB CRUD and startup health checks are
@@ -43,8 +43,7 @@ ai-agent-platform/
 │   │   ├── runtime.py      #   per-definition compiled runtime cache
 │   │   └── api/            #   /agents definition, document, chat, stream routes
 │   ├── rag/src/rag/
-│   │   ├── service.py      #   RAGService - the module's public entry point
-│   │   ├── api/            #   POST /rag/documents, /documents/file, /search
+│   │   ├── service.py      #   private retrieval implementation
 │   │   └── internal/       #   ports.py (Embedder, VectorStore), errors.py (RagError)
 │   └── tool/src/tool/       # tool registry - no internal/ (see architecture.md)
 │       ├── registry.py     #   ToolRegistry + RegisteredTool - register_local/register_mcp
@@ -141,11 +140,11 @@ variable still wins over the file. It didn't always: `uv run` alone doesn't
 read `.env`, and until that call was added every value in it was silently
 inert, which is how `OLLAMA_REASONING=false` failed to apply and broke tool
 calling outright (see "Performance notes" below). `GET /health` always works.
-`POST /rag/documents` (JSON text) and `POST /rag/documents/file` (multipart
-txt/pdf/docx upload) index general RAG data; `POST /rag/search` finds
-relevant chunks. Public conversations use a configurable agent at
-`POST /agents/{agent_id}/chat`, with a separate
-`/agents/{agent_id}/chat/stream` endpoint for streaming output.
+Public document ingestion and conversations are always scoped to a configurable
+agent: `POST /agents/{agent_id}/documents` accepts JSON text,
+`POST /agents/{agent_id}/documents/file` accepts multipart TXT/PDF/DOCX, and
+`POST /agents/{agent_id}/chat` starts a conversation. The separate
+`/agents/{agent_id}/chat/stream` endpoint returns streaming output.
 
 ### Multiple customizable agents
 
@@ -174,6 +173,12 @@ curl 'http://localhost:8000/agents?owner_id=local-dev'
 curl -X POST 'http://localhost:8000/agents/AGENT_ID/documents?owner_id=local-dev' \
   -H 'Content-Type: application/json' \
   -d '{"source_id":"notes","text":"Project notes go here."}'
+
+# Upload TXT, PDF, or DOCX context for this agent.
+curl -X POST 'http://localhost:8000/agents/AGENT_ID/documents/file?owner_id=local-dev' \
+  -F 'file=@./project-notes.pdf' \
+  -F 'source_id=project-notes'
+
 curl -X POST 'http://localhost:8000/agents/AGENT_ID/chat?owner_id=local-dev' \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"research-1","message":"What do the notes say?"}'

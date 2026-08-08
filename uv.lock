@@ -43,6 +43,7 @@ dependencies = [
     { name = "agent" },
     { name = "fastapi" },
     { name = "pydantic" },
+    { name = "python-multipart" },
     { name = "rag" },
     { name = "tool" },
 ]
@@ -52,6 +53,7 @@ requires-dist = [
     { name = "agent", editable = "modules/agent" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "pydantic", specifier = ">=2.9" },
+    { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "rag", editable = "modules/rag" },
     { name = "tool", editable = "modules/tool" },
 ]

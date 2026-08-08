@@ -20,7 +20,6 @@ from agent.internal.graph import AgentError
 from agents.api.router import router as agents_router
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from rag.api.router import router as rag_router
 from tool.api.router import router as tool_router
 
 from app.errors import handle_agent_error, handle_not_implemented, handle_platform_error
@@ -52,7 +51,6 @@ app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
 app.include_router(health_router)
 app.include_router(agents_router)
-app.include_router(rag_router)
 app.include_router(tool_router)
 
 logger.debug("ASGI app assembled: %d route(s) registered", len(app.routes))
