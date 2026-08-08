@@ -72,15 +72,20 @@ class FakeRetriever:
 
 
 class FakeToolRegistry:
-    """Fake satisfying agent.internal.ports.ToolRegistry. Always exposes one tool
-    ("echo") so execute_tools doesn't short-circuit on an empty tool list.
+    """Fake satisfying agent.internal.ports.ToolRegistry. Always exposes "echo"
+    (so execute_tools doesn't short-circuit on an empty tool list); pass
+    extra_tools for tests that need more than one registered tool, e.g. the
+    allowed_tools filter tests below.
     """
 
-    def __init__(self):
+    def __init__(self, extra_tools: list[ToolDefinition] | None = None):
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self._tools = [ToolDefinition(name="echo", description="Echoes its arguments.")] + (
+            extra_tools or []
+        )
 
     def get_tools(self) -> list[ToolDefinition]:
-        return [ToolDefinition(name="echo", description="Echoes its arguments.")]
+        return self._tools
 
     async def call_tool(self, name: str, arguments: dict[str, object]) -> ToolResult:
         self.calls.append((name, arguments))
@@ -207,6 +212,67 @@ async def test_run_calls_the_tool_the_llm_requests() -> None:
     await service.run(session_id="s1", message="echo x=1")
 
     assert tool_registry.calls == [("echo", {"x": 1})]
+
+
+async def test_run_with_tools_allows_a_tool_in_the_list() -> None:
+    tool_registry = FakeToolRegistry(
+        extra_tools=[ToolDefinition(name="shout", description="Shouts its arguments.")]
+    )
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
+
+    result = await service.run(session_id="s1", message="echo x=1", tools=["echo"])
+
+    assert tool_registry.calls == [("echo", {"x": 1})]
+    assert result.tools_invoked == ["echo"]
+
+
+async def test_run_with_tools_blocks_a_tool_outside_the_list_even_if_the_llm_requests_it() -> None:
+    """Enforced at the call-dispatch level, not just by omitting the tool
+    from the prompt - a hallucinated name that happens to exist elsewhere
+    in the registry must not slip through.
+    """
+    tool_registry = FakeToolRegistry(
+        extra_tools=[ToolDefinition(name="shout", description="Shouts its arguments.")]
+    )
+    # FakeLLMProvider doesn't read the prompt's tool list - it "requests"
+    # shout regardless of what execute_tools actually showed it, standing
+    # in for the model naming a tool never offered.
+    llm = FakeLLMProvider(tool_call={"name": "shout", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
+
+    result = await service.run(session_id="s1", message="echo x=1", tools=["echo"])
+
+    assert tool_registry.calls == []
+    assert result.tools_invoked == []
+
+
+async def test_run_with_an_empty_tools_list_leaves_every_tool_available() -> None:
+    tool_registry = FakeToolRegistry(
+        extra_tools=[ToolDefinition(name="shout", description="Shouts its arguments.")]
+    )
+    llm = FakeLLMProvider(tool_call={"name": "shout", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
+
+    # "shout" mentioned so the heuristic reaches the LLM at all.
+    await service.run(session_id="s1", message="shout x=1", tools=[])
+
+    assert tool_registry.calls == [("shout", {"x": 1})]
+
+
+async def test_run_with_an_unregistered_tool_name_leaves_no_tools_available() -> None:
+    tool_registry = FakeToolRegistry()
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
+
+    result = await service.run(session_id="s1", message="echo x=1", tools=["nonexistent"])
+
+    assert tool_registry.calls == []
+    assert result.tools_invoked == []
+    # No usable tool at all should skip the LLM tool-decision call outright,
+    # same as an empty registry - see
+    # test_execute_tools_skips_the_llm_call_when_no_tool_is_mentioned.
+    assert not any("Available tools:" in prompt for prompt in llm.prompts)
 
 
 async def test_run_calls_no_tools_when_the_llm_requests_none() -> None:

@@ -18,10 +18,16 @@ class ChatRequest(BaseModel):
         session_id: Client-chosen conversation identifier, used to resume
             agent memory across turns.
         message: The user's message.
+        tools: Restrict which tools the agent may call this turn, by
+            name (see ``GET /tools`` for the registered names). Empty
+            (the default) leaves every registered tool available - same
+            as omitting this field entirely. A name that isn't actually
+            registered just means one less usable tool, not an error.
     """
 
     session_id: str
     message: str
+    tools: list[str] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):

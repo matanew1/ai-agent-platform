@@ -41,7 +41,9 @@ async def chat(payload: ChatRequest, request: Request) -> ChatResponse:
     """
     logger.debug("POST /chat session_id=%r", payload.session_id)
     agent_service: AgentService = request.app.state.agent_service
-    result = await agent_service.run(session_id=payload.session_id, message=payload.message)
+    result = await agent_service.run(
+        session_id=payload.session_id, message=payload.message, tools=payload.tools
+    )
     return ChatResponse(
         session_id=payload.session_id,
         message=result.answer,
@@ -81,7 +83,7 @@ async def chat_stream(payload: ChatRequest, request: Request) -> StreamingRespon
     logger.debug("POST /chat/stream session_id=%r", payload.session_id)
     agent_service: AgentService = request.app.state.agent_service
     metadata, stream = await agent_service.run_stream(
-        session_id=payload.session_id, message=payload.message
+        session_id=payload.session_id, message=payload.message, tools=payload.tools
     )
     return StreamingResponse(
         stream,

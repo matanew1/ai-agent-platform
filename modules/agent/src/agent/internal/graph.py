@@ -118,6 +118,11 @@ class AgentState(BaseModel):
         session_id: Conversation/session identifier.
         input: The user's latest message.
         history: Prior turns in this conversation, oldest first.
+        allowed_tools: Tool names execute_tools may consider this turn.
+            Empty (the default) means every registered tool is available -
+            see ``_execute_tools``. A name not in the registry just means
+            one less usable tool, the same as an unknown name reaching
+            ``ToolRegistry.call_tool`` - not an error.
         context: Chunks retrieved by the retrieve_context node.
         tool_results: Results from tools run by the execute_tools node.
         answer: Final answer produced by generate_answer, once set.
@@ -126,6 +131,7 @@ class AgentState(BaseModel):
     session_id: str
     input: str
     history: list[ChatMessage] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
     context: list[Chunk] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
     answer: str | None = None
@@ -203,9 +209,13 @@ class AgentGraph:
     async def _execute_tools(self, state: AgentState) -> dict[str, Any]:
         """Ask the LLM which tools, if any, would help, then run them."""
         tools = self._tool_registry.get_tools()
+        if state.allowed_tools:
+            allowed = set(state.allowed_tools)
+            tools = [tool for tool in tools if tool.name in allowed]
         if not tools or not _mentions_a_tool(state.input, tools):
             logger.debug(
-                "[execute_tools] session_id=%r skipped (no tool mentioned)", state.session_id
+                "[execute_tools] session_id=%r skipped (no tool mentioned or none allowed)",
+                state.session_id,
             )
             return {"tool_results": []}
 
@@ -223,9 +233,15 @@ class AgentGraph:
         logger.debug(
             "[execute_tools] session_id=%r requested_calls=%d", state.session_id, len(calls)
         )
+        # tools (not the full registry) is the enforcement boundary: a call
+        # for anything outside it is dropped here, not just kept out of the
+        # prompt - a hallucinated name that happens to exist elsewhere in
+        # the registry must not slip through just because the LLM guessed it.
+        allowed_names = {tool.name for tool in tools}
         results = [
             await self._tool_registry.call_tool(call["name"], call.get("arguments") or {})
             for call in calls
+            if call["name"] in allowed_names
         ]
         return {"tool_results": results}
 
