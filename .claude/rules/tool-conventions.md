@@ -167,6 +167,45 @@ This does mean the module depends on both the `mcp` SDK (see "Ownership"
 above for why that no longer collides with this module's own name) and
 `pyyaml` again.
 
+A third server, `duckduckgo` (`ddg-mcp`: `ddg-text-search`,
+`ddg-image-search`, `ddg-news-search`, `ddg-video-search`, `ddg-ai-chat`),
+is enabled despite a measured accuracy cost, not because none was found -
+an explicit exception to "Servers evaluated and not enabled" below, worth
+reading in full before adding a fourth. Same methodology as that
+section's `sqlite` table, 3 trials each:
+
+| registered tools | `fetch` | `get_current_time` | `ddg-text-search` |
+| --- | --- | --- | --- |
+| fetch + time (3) | 3/3 | 3/3 | - |
+| fetch + time + duckduckgo (8) | 3/3 | **1/3** | **0/3** |
+
+This is the same failure shape `sqlite` was rejected for, measurably
+worse on both counts: `get_current_time` drops further (1/3, vs sqlite's
+2/3), and `ddg-text-search` itself - the obviously-correct tool for an
+explicit "search the web for..." request - is never once selected. The
+`sqlite` section's own rule applies word for word: "a capability the
+agent reaches ~0-30% of the time, which also degrades one it previously
+reached reliably, is worse than no capability." It's enabled anyway,
+on the strength of DuckDuckGo being the one capability here an LLM
+categorically cannot substitute with a plausible-sounding guess (real-time
+web results, not a training-data snapshot) - the same reasoning that
+justified `time`, extended to a case where the selection cost is real
+and worse. If this table is still true under whatever model is
+configured when you're reading it, treat a request that clearly needs a
+search as needing an explicit nudge ("use duckduckgo to search for...")
+the same way `time` needed one for bare "what time is it?" - see that
+section above. Revisit this - drop it, or retry the table - if a larger
+model is ever configured; the table is the way to check.
+
+`ddg-mcp` needs the same `--with mcp==1.9.4` pin as every other server
+here (see the gotcha at the end of this section) *in addition to* its own
+`--from ddg-mcp==0.1.1` (it declares a looser `mcp>=1.3.0` dependency that
+otherwise resolves a newer, incompatible SDK - confirmed the same way as
+every other server here, by reproducing the crash unpinned first). It's a
+community server, not an official DuckDuckGo integration - keep the pin
+and re-verify periodically for upstream search-result or rate-limit
+changes.
+
 `get_current_time`'s `timezone` argument is `required` in its schema, with
 no schema-level `default` - only a prose instruction in the parameter's own
 `description` ("Use 'Asia/Jerusalem' as local timezone if no timezone

@@ -61,6 +61,21 @@ time:
   command: uvx
   args: ["--with", "mcp==1.9.4", "mcp-server-time"]
 
+duckduckgo:
+  # Free, keyless web search. The server exposes text, news, image, video,
+  # and AI-chat search tools through DuckDuckGo. It is a community server,
+  # not an official DuckDuckGo integration, so pin the package version and
+  # test it periodically for upstream search-result changes or rate limits.
+  #
+  # ddg-mcp's permissive ``mcp>=1.3.0`` dependency otherwise resolves a
+  # newer incompatible SDK: it uses the removed ``Server.list_resources``
+  # decorator and exits before the MCP handshake. Pin its isolated
+  # subprocess to mcp 1.9.4, as for the other Python servers above.
+  # ``--from`` installs exactly this package and runs its ``ddg-mcp`` console
+  # entry point; no API key, account, or payment details are needed.
+  command: uvx
+  args: ["--with", "mcp==1.9.4", "--from", "ddg-mcp==0.1.1", "ddg-mcp"]
+
 # Two more servers were evaluated here and deliberately not enabled -
 # sqlite (structured data) and git (repo awareness). Both connect fine and
 # both answer real calls; the reasons they're off are measured, not
