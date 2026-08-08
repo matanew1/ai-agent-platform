@@ -12,6 +12,19 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.4.0](https://github.com/matanew1/ai-agent-platform/compare/v0.3.0...v0.4.0) (2026-08-08)
+
+
+### Added
+
+* **agent:** report execution time, tools invoked, and chunks retrieved ([e73748c](https://github.com/matanew1/ai-agent-platform/commit/e73748cace7ee854ef62d3735e2b2babc7a51247))
+* **rag:** add LLM-based reranking with a per-call toggle ([2095c88](https://github.com/matanew1/ai-agent-platform/commit/2095c881eba638a7f8998e984f267ea815e66196))
+
+
+### Fixed
+
+* **rag:** scale reranking's max_tokens with candidate count ([638a14d](https://github.com/matanew1/ai-agent-platform/commit/638a14d0dcbf0e8589a7c60bac77de2b217351dd))
+
 ## [0.3.0](https://github.com/matanew1/ai-agent-platform/compare/v0.2.0...v0.3.0) (2026-08-08)
 
 
