@@ -23,13 +23,12 @@ from agent.graph import AgentError
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from tool.api.router import router as tool_router
 
+from app.artifacts import router as artifacts_router
 from app.errors import handle_agent_error, handle_not_implemented, handle_platform_error
 from app.health import router as health_router
 from app.lifespan import lifespan
-from shared.artifacts import ARTIFACTS_URL_PATH, get_artifacts_directory
 from shared.logging import configure_logging
 from shared.types import PlatformError
 
@@ -79,15 +78,6 @@ app.add_middleware(
     ],
 )
 
-# Generated PDF/Markdown files are written only beneath ARTIFACTS_DIR by
-# shared.artifacts and exposed read-only here. StaticFiles rejects methods
-# other than GET/HEAD and prevents URL traversal outside this directory.
-app.mount(
-    ARTIFACTS_URL_PATH,
-    StaticFiles(directory=get_artifacts_directory()),
-    name="artifacts",
-)
-
 app.add_exception_handler(AgentError, handle_agent_error)
 app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
@@ -99,6 +89,7 @@ app.include_router(models_router, dependencies=[Depends(get_current_user)])
 # protects both registry reads and direct invocation without coupling the
 # standalone ``tool`` module to the agent module's authentication dependency.
 app.include_router(tool_router, dependencies=[Depends(get_current_user)])
+app.include_router(artifacts_router)
 
 logger.debug("ASGI app assembled: %d route(s) registered", len(app.routes))
 

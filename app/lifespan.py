@@ -32,6 +32,7 @@ from tool.registry import ToolRegistry
 from tool.tools import markdown, pdf
 
 from infrastructure.agent_definitions import MongoAgentDefinitionRepository
+from infrastructure.artifacts import MongoArtifactAccessRepository
 from infrastructure.auth import build_authenticator_from_env
 from infrastructure.database import MongoDatabase
 from infrastructure.llm import MistralProvider, OllamaEmbedder, OllamaProvider
@@ -143,6 +144,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     redis_sessions = RedisSessionStore(redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     mongo_sessions = MongoSessionRepository(database)
+    artifact_access = MongoArtifactAccessRepository(database)
     memory = HybridSessionStore(durable=mongo_sessions, hot=redis_sessions)
     vector_store = QdrantVectorStore(
         url=os.getenv("QDRANT_URL", "http://localhost:6333"),
@@ -154,6 +156,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # SECTION 2 - Open connections that need an explicit connect step.
     await database.connect()
     await mongo_sessions.ensure_indexes()
+    await artifact_access.ensure_indexes()
     await redis_sessions.connect()
     logger.debug("Mongo + Redis connections opened")
 
@@ -224,6 +227,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # .claude/rules/architecture.md (dependency injection).
         app.state.tool_registry = tool_registry
         app.state.authenticator = authenticator
+        app.state.artifact_access = artifact_access
         app.state.rag_service = rag_service
         app.state.session_memory = memory
         app.state.agent_definition_service = agent_definition_service

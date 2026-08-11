@@ -1,7 +1,7 @@
 """HTTP routes for authenticated-user-scoped customizable agents.
 
 Three routers: ``router`` (``/agents``) for agent definitions and chat;
-``documents_router`` (``/documents``) for an owner's document library; and
+``documents_router`` (``/documents``) for the authenticated user's document library; and
 ``models_router`` (``/models``) for provider-aware configuration options.
 Documents are deliberately not nested under ``/agents/{agent_id}`` -
 they belong to the authenticated user, not to one agent, and every agent
@@ -39,6 +39,7 @@ from agent.api.schemas import (
 from agent.definitions import AgentDefinitionService
 from agent.ports import DocumentLibrary, Memory, ModelCatalog
 from agent.runtime import AgentRuntimeFactory
+from shared.artifacts import ArtifactAccessRepository
 from shared.documents import extract_document_text
 from shared.types import AgentDefinition, IndexedDocument, SessionCheckpoint
 
@@ -56,7 +57,7 @@ def _agent_response(definition: AgentDefinition) -> AgentResponse:
 
 
 async def _owned_definition(request: Request, owner_id: str, agent_id: str) -> AgentDefinition:
-    """Load an agent only when it belongs to the supplied owner id."""
+    """Load an agent only when it belongs to the verified internal owner id."""
     definitions: AgentDefinitionService = request.app.state.agent_definition_service
     definition = await definitions.get(owner_id, agent_id)
     if definition is None:
@@ -392,6 +393,17 @@ async def stream_with_agent(
         tools=definition.allowed_tools,
         attachments=attachments,
     )
+    artifact_access: ArtifactAccessRepository = request.app.state.artifact_access
+    try:
+        await artifact_access.grant(current_user.id, metadata.artifacts)
+    except BaseException:
+        # run_stream's async generator owns the per-session lock. If the
+        # ownership manifest cannot be persisted before the response starts,
+        # close it explicitly so that lock cannot leak.
+        close_stream = getattr(stream, "aclose", None)
+        if close_stream is not None:
+            await close_stream()
+        raise
     return StreamingResponse(
         stream,
         media_type="text/plain",

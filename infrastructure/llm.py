@@ -10,8 +10,14 @@ is what decides which provider gets wired into ``AgentService``, via the
 Two providers are implemented, both via LangChain (this project already
 depends on it for agent orchestration, so providers use it too rather than
 hand-rolling HTTP calls): ``OllamaProvider`` (local, backed by
-``ChatOllama``) and ``MistralProvider`` (remote, backed by
-``ChatMistralAI`` - ``mistral-small-latest`` is free-tier eligible, see
+``ChatOllama`` - also reachable against Ollama's hosted *cloud* models,
+e.g. ``OLLAMA_MODEL=minimax-m3:cloud``, via the same client once
+``ollama signin`` has been run; see ``.env.example``) and ``MistralProvider``
+(remote, backed by ``ChatMistralAI`` - ``mistral-medium-latest`` is the
+current default, rate-limited-but-free on Mistral's "Experiment" tier as of
+this writing; verify current free-tier model coverage at
+https://console.mistral.ai/ before relying on it, and fall back to
+``mistral-small-latest`` if your account doesn't have it - see
 ``.env.example``). This second real implementation is what proves the
 ``LLMProvider`` port is actually load-bearing, not speculative - see
 "Avoiding over-engineering" in ``.claude/rules/architecture.md``. To add a
@@ -22,15 +28,22 @@ into ``_build_llm_provider`` in ``app/lifespan.py``.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
+from time import monotonic
 
 from langchain_mistralai import ChatMistralAI
 from langchain_ollama import ChatOllama, OllamaEmbeddings
+from ollama import AsyncClient
 
-from shared.types import PlatformError
+from shared.types import ModelCatalogSnapshot, PlatformError
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TEMPERATURE = 0.3
+_MODEL_CATALOG_TIMEOUT_SECONDS = 3.0
+_MODEL_CATALOG_TTL_SECONDS = 30.0
 
 
 class LLMError(PlatformError):
@@ -74,6 +87,36 @@ def _require_content(text: str, model: str, done_reason: str | None = None) -> s
     raise LLMError(f"{model!r} returned an empty completion (done_reason={done_reason!r}){hint}.")
 
 
+def _looks_like_embedding_model(name: str, configured_embedding_model: str) -> bool:
+    """Conservatively identify embedding-only models when capability data is absent."""
+    normalized = name.casefold().removesuffix(":latest")
+    configured = configured_embedding_model.casefold().removesuffix(":latest")
+    if normalized == configured:
+        return True
+    embedding_markers = (
+        "embed",
+        "embedding",
+        "all-minilm",
+        "bge-",
+        "bge_",
+        "e5-",
+        "gte-",
+    )
+    return any(marker in normalized for marker in embedding_markers)
+
+
+def _supports_chat_model(
+    name: str,
+    configured_embedding_model: str,
+    capabilities: list[str] | None,
+) -> bool:
+    """Interpret Ollama capability metadata with an older-server fallback."""
+    normalized_capabilities = {capability.casefold() for capability in capabilities or []}
+    if normalized_capabilities:
+        return "completion" in normalized_capabilities
+    return not _looks_like_embedding_model(name, configured_embedding_model)
+
+
 class OllamaProvider:
     """LLM provider backed by a local Ollama server.
 
@@ -101,16 +144,125 @@ class OllamaProvider:
         self,
         base_url: str,
         model: str,
+        temperature: float = DEFAULT_TEMPERATURE,
         reasoning: bool | str | None = None,
         keep_alive: str | int | None = None,
+        embedding_model: str = "bge-m3",
     ) -> None:
+        self.provider_name = "ollama"
+        self.default_model = model
+        self.default_temperature = temperature
         self._model = model
-        chat_kwargs: dict[str, object] = {"base_url": base_url, "model": model}
+        self._base_url = base_url
+        self._embedding_model = embedding_model
+        self._catalog_snapshot: ModelCatalogSnapshot | None = None
+        self._catalog_cached_at = 0.0
+        self._catalog_lock = asyncio.Lock()
+        chat_kwargs: dict[str, object] = {
+            "base_url": base_url,
+            "model": model,
+            "temperature": temperature,
+        }
         if reasoning is not None:
             chat_kwargs["reasoning"] = reasoning
         if keep_alive is not None:
             chat_kwargs["keep_alive"] = keep_alive
         self._chat = ChatOllama(**chat_kwargs)
+
+    def with_options(
+        self, *, model: str | None = None, temperature: float | None = None
+    ) -> OllamaProvider:
+        """Clone model settings while reusing LangChain's underlying clients."""
+        if model is None and temperature is None:
+            return self
+        configured = object.__new__(type(self))
+        configured.provider_name = self.provider_name
+        configured.default_model = self.default_model
+        configured.default_temperature = self.default_temperature
+        configured._model = model or self._model
+        configured._base_url = self._base_url
+        configured._embedding_model = self._embedding_model
+        configured._catalog_snapshot = self._catalog_snapshot
+        configured._catalog_cached_at = self._catalog_cached_at
+        configured._catalog_lock = self._catalog_lock
+        updates: dict[str, object] = {}
+        if model is not None:
+            updates["model"] = model
+        if temperature is not None:
+            updates["temperature"] = temperature
+        configured._chat = self._chat.model_copy(update=updates)
+        return configured
+
+    async def available_models(self) -> ModelCatalogSnapshot:
+        """Discover installed Ollama chat models without making startup depend on Ollama.
+
+        Ollama's ``/api/tags`` inventory establishes availability, while
+        ``/api/show`` capability metadata distinguishes chat/completion
+        models from embedding-only models. Older servers may omit that
+        metadata, so the configured embedder and conservative name markers
+        provide a fallback filter. A discovery outage returns the configured
+        default as a non-authoritative snapshot; callers may still save it.
+        """
+        if (
+            self._catalog_snapshot is not None
+            and monotonic() - self._catalog_cached_at < _MODEL_CATALOG_TTL_SECONDS
+        ):
+            return self._catalog_snapshot
+
+        async with self._catalog_lock:
+            if (
+                self._catalog_snapshot is not None
+                and monotonic() - self._catalog_cached_at < _MODEL_CATALOG_TTL_SECONDS
+            ):
+                return self._catalog_snapshot
+            snapshot = await self._discover_models()
+            self._catalog_snapshot = snapshot
+            self._catalog_cached_at = monotonic()
+            return snapshot
+
+    async def _discover_models(self) -> ModelCatalogSnapshot:
+        try:
+            async with AsyncClient(
+                host=self._base_url, timeout=_MODEL_CATALOG_TIMEOUT_SECONDS
+            ) as client:
+                response = await client.list()
+                model_names = sorted(
+                    {item.model for item in response.models if item.model},
+                    key=str.casefold,
+                )
+                chat_capabilities = await asyncio.gather(
+                    *(self._supports_chat(client, model_name) for model_name in model_names)
+                )
+        except Exception as exc:
+            logger.warning(
+                "Ollama model discovery unavailable; using configured fallback: %s",
+                exc,
+            )
+            return ModelCatalogSnapshot(models=(self.default_model,), authoritative=False)
+
+        chat_models = tuple(
+            model_name
+            for model_name, supports_chat in zip(model_names, chat_capabilities, strict=True)
+            if supports_chat
+        )
+        return ModelCatalogSnapshot(models=chat_models, authoritative=True)
+
+    async def _supports_chat(self, client: AsyncClient, model_name: str) -> bool:
+        try:
+            details = await client.show(model_name)
+        except Exception as exc:
+            logger.debug(
+                "Ollama capability lookup failed: model=%r error=%s",
+                model_name,
+                exc,
+            )
+            return not _looks_like_embedding_model(model_name, self._embedding_model)
+
+        return _supports_chat_model(
+            model_name,
+            self._embedding_model,
+            details.capabilities,
+        )
 
     async def generate(self, prompt: str, max_tokens: int | None = None) -> str:
         """Generate a completion for a prompt.
@@ -203,15 +355,51 @@ class MistralProvider:
 
     Args:
         api_key: Mistral API key (see ``MISTRAL_API_KEY`` in ``.env.example``).
-        model: Model name to use. ``mistral-small-latest`` (the default
-            picked in ``app/lifespan.py``) is free-tier eligible - Mistral's
-            free "Experiment" plan covers it, rate-limited rather than
-            metered per token.
+        model: Model name to use. ``mistral-medium-latest`` (the default
+            picked in ``app/lifespan.py``) is Mistral's "frontier-class
+            multimodal model optimized for agentic and coding use cases" per
+            Mistral's own docs, and free-tier reachable on the "Experiment"
+            plan (rate-limited rather than metered per token) as of this
+            writing - confirm current entitlement at
+            https://console.mistral.ai/ before depending on it, since a free
+            tier's exact model coverage can change without notice.
+            ``mistral-small-latest`` is the more conservative, long-confirmed
+            free-tier choice if ``medium`` isn't available on your account.
     """
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, temperature: float = DEFAULT_TEMPERATURE) -> None:
+        self.provider_name = "mistralai"
+        self.default_model = model
+        self.default_temperature = temperature
         self._model = model
-        self._chat = ChatMistralAI(model=model, mistral_api_key=api_key)
+        self._chat = ChatMistralAI(
+            model=model,
+            mistral_api_key=api_key,
+            temperature=temperature,
+        )
+
+    def with_options(
+        self, *, model: str | None = None, temperature: float | None = None
+    ) -> MistralProvider:
+        """Clone model settings while reusing LangChain's underlying clients."""
+        if model is None and temperature is None:
+            return self
+        configured = object.__new__(type(self))
+        configured.provider_name = self.provider_name
+        configured.default_model = self.default_model
+        configured.default_temperature = self.default_temperature
+        configured._model = model or self._model
+        updates: dict[str, object] = {}
+        if model is not None:
+            updates["model"] = model
+        if temperature is not None:
+            updates["temperature"] = temperature
+        configured._chat = self._chat.model_copy(update=updates)
+        return configured
+
+    async def available_models(self) -> ModelCatalogSnapshot:
+        """Expose the configured Mistral model without calling its authenticated API."""
+        return ModelCatalogSnapshot(models=(self.default_model,), authoritative=False)
 
     async def generate(self, prompt: str, max_tokens: int | None = None) -> str:
         """Generate a completion for a prompt.
