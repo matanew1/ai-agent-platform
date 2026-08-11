@@ -58,6 +58,14 @@ class _Hot:
         self.events.append("hot:delete")
         return self.items.pop(session_id, None) is not None
 
+    async def list_checkpoints(self, session_prefix):
+        self.events.append("hot:list")
+        return [
+            checkpoint
+            for session_id, checkpoint in self.items.items()
+            if session_id.startswith(session_prefix)
+        ]
+
     @asynccontextmanager
     async def session_lock(self, _session_id):
         self.events.append("lock:enter")
@@ -156,3 +164,36 @@ async def test_hybrid_lists_from_mongo_and_deletes_under_the_redis_lock() -> Non
     assert await store.delete_checkpoint(checkpoint.session_id) is True
     assert durable.events == ["mongo:list", "mongo:delete"]
     assert hot.events == ["lock:enter", "hot:delete", "lock:exit"]
+
+
+async def test_hybrid_migrates_only_legacy_redis_only_checkpoints() -> None:
+    legacy = SessionCheckpoint(session_id="owner:agent:legacy")
+    already_durable = SessionCheckpoint(session_id="owner:agent:durable")
+    hot = _Hot()
+    hot.items = {
+        legacy.session_id: legacy,
+        already_durable.session_id: already_durable,
+    }
+
+    class _ManyDurable(_Durable):
+        def __init__(self):
+            super().__init__()
+            self.items = {already_durable.session_id: already_durable}
+
+        async def get_checkpoint(self, session_id):
+            return self.items.get(session_id)
+
+        async def save_checkpoint(self, checkpoint):
+            self.items[checkpoint.session_id] = checkpoint
+
+    durable = _ManyDurable()
+    store = HybridSessionStore(durable, hot)
+
+    migrated = await store.migrate_hot_checkpoints()
+
+    assert migrated == 1
+    assert durable.items == {
+        already_durable.session_id: already_durable,
+        legacy.session_id: legacy,
+    }
+    assert hot.events == ["hot:list"]

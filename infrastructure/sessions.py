@@ -91,6 +91,23 @@ class HybridSessionStore:
         self._durable = durable
         self._hot = hot
 
+    async def migrate_hot_checkpoints(self) -> int:
+        """Copy legacy Redis-only checkpoints into MongoDB once at startup.
+
+        The operation is idempotent and never overwrites a durable checkpoint,
+        which may be newer than its cached copy. Redis SCAN is used by the hot
+        adapter, so this does not issue a blocking KEYS command.
+        """
+        migrated = 0
+        for checkpoint in await self._hot.list_checkpoints(""):
+            if await self._durable.get_checkpoint(checkpoint.session_id) is not None:
+                continue
+            await self._durable.save_checkpoint(checkpoint)
+            migrated += 1
+        if migrated:
+            logger.info("Migrated %d legacy Redis session checkpoint(s) to MongoDB", migrated)
+        return migrated
+
     async def get_checkpoint(self, session_id: str) -> SessionCheckpoint | None:
         try:
             cached = await self._hot.get_checkpoint(session_id)

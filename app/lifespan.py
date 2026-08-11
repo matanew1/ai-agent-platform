@@ -158,6 +158,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await mongo_sessions.ensure_indexes()
     await artifact_access.ensure_indexes()
     await redis_sessions.connect()
+    await memory.migrate_hot_checkpoints()
     logger.debug("Mongo + Redis connections opened")
 
     # From here on, everything through SECTION 6's yield runs inside this

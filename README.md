@@ -399,7 +399,9 @@ session:
   `infrastructure/redis.py`), refreshed on every save. An abandoned session
   ages out of the cache, then transparently reloads from MongoDB when opened
   again. `HybridSessionStore` invalidates the old Redis value before a durable
-  Mongo write so a cache-write failure can never serve stale history.
+  Mongo write so a cache-write failure can never serve stale history. Startup
+  also scans and copies legacy Redis-only checkpoints that do not yet have a
+  Mongo record; this migration is idempotent and never overwrites durable data.
 
 The actual ceiling on *concurrent* sessions today is the LLM backend, not
 this module: `LLM_PROVIDER=ollama` (default) means every session's calls
