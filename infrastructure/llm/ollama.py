@@ -1,30 +1,4 @@
-"""LLM provider adapters.
-
-``agent`` depends on the ``LLMProvider`` protocol defined in
-``modules/agent/src/agent/internal/ports.py`` - it never imports this module. Each
-class below only needs to structurally match that protocol's ``generate``/
-``generate_stream`` signatures; the composition root (``app/lifespan.py``)
-is what decides which provider gets wired into ``AgentService``, via the
-``LLM_PROVIDER`` env var (``ollama`` or ``mistralai``).
-
-Two providers are implemented, both via LangChain (this project already
-depends on it for agent orchestration, so providers use it too rather than
-hand-rolling HTTP calls): ``OllamaProvider`` (local, backed by
-``ChatOllama`` - also reachable against Ollama's hosted *cloud* models,
-e.g. ``OLLAMA_MODEL=minimax-m3:cloud``, via the same client once
-``ollama signin`` has been run; see ``.env.example``) and ``MistralProvider``
-(remote, backed by ``ChatMistralAI`` - ``mistral-medium-latest`` is the
-current default, rate-limited-but-free on Mistral's "Experiment" tier as of
-this writing; verify current free-tier model coverage at
-https://console.mistral.ai/ before relying on it, and fall back to
-``mistral-small-latest`` if your account doesn't have it - see
-``.env.example``). This second real implementation is what proves the
-``LLMProvider`` port is actually load-bearing, not speculative - see
-"Avoiding over-engineering" in ``.claude/rules/architecture.md``. To add a
-third provider (OpenAI, Anthropic, ...), add a class with the same
-signatures - LangChain has a chat model for most of them - and wire it
-into ``_build_llm_provider`` in ``app/lifespan.py``.
-"""
+"""Ollama chat and embedding adapters."""
 
 from __future__ import annotations
 
@@ -33,21 +7,19 @@ import logging
 from collections.abc import AsyncIterator
 from time import monotonic
 
-from langchain_mistralai import ChatMistralAI
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from ollama import AsyncClient
 
-from shared.types import ModelCatalogSnapshot, PlatformError
+from infrastructure.errors import EmbeddingError, LLMError
+from infrastructure.llm.protocol import EmbeddingClient, LanguageModelClient
+from shared.implements import implements
+from shared.types import ModelCatalogSnapshot
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TEMPERATURE = 0.3
 _MODEL_CATALOG_TIMEOUT_SECONDS = 3.0
 _MODEL_CATALOG_TTL_SECONDS = 30.0
-
-
-class LLMError(PlatformError):
-    """Raised when an LLM call fails."""
 
 
 def _require_content(text: str, model: str, done_reason: str | None = None) -> str:
@@ -117,6 +89,7 @@ def _supports_chat_model(
     return not _looks_like_embedding_model(name, configured_embedding_model)
 
 
+@implements(LanguageModelClient)
 class OllamaProvider:
     """LLM provider backed by a local Ollama server.
 
@@ -129,8 +102,8 @@ class OllamaProvider:
             model's own default behavior alone. Applies to every call from
             this instance - see ``OLLAMA_REASONING`` in ``.env.example``.
             Reasoning effort isn't a concept every provider has, so it's a
-            constructor argument here rather than part of the
-            ``LLMProvider`` protocol every provider must implement.
+            constructor argument here rather than part of the generic
+            language-model contract.
         keep_alive: How long Ollama keeps this model loaded in memory after
             the last request, e.g. ``"30m"`` (duration string) or ``-1``
             (indefinitely). ``None`` leaves Ollama's own default (5m) alone.
@@ -350,133 +323,9 @@ class OllamaProvider:
             _require_content("", self._model, done_reason)
 
 
-class MistralProvider:
-    """LLM provider backed by the remote Mistral AI API.
-
-    Args:
-        api_key: Mistral API key (see ``MISTRAL_API_KEY`` in ``.env.example``).
-        model: Model name to use. ``mistral-medium-latest`` (the default
-            picked in ``app/lifespan.py``) is Mistral's "frontier-class
-            multimodal model optimized for agentic and coding use cases" per
-            Mistral's own docs, and free-tier reachable on the "Experiment"
-            plan (rate-limited rather than metered per token) as of this
-            writing - confirm current entitlement at
-            https://console.mistral.ai/ before depending on it, since a free
-            tier's exact model coverage can change without notice.
-            ``mistral-small-latest`` is the more conservative, long-confirmed
-            free-tier choice if ``medium`` isn't available on your account.
-    """
-
-    def __init__(self, api_key: str, model: str, temperature: float = DEFAULT_TEMPERATURE) -> None:
-        self.provider_name = "mistralai"
-        self.default_model = model
-        self.default_temperature = temperature
-        self._model = model
-        self._chat = ChatMistralAI(
-            model=model,
-            mistral_api_key=api_key,
-            temperature=temperature,
-        )
-
-    def with_options(
-        self, *, model: str | None = None, temperature: float | None = None
-    ) -> MistralProvider:
-        """Clone model settings while reusing LangChain's underlying clients."""
-        if model is None and temperature is None:
-            return self
-        configured = object.__new__(type(self))
-        configured.provider_name = self.provider_name
-        configured.default_model = self.default_model
-        configured.default_temperature = self.default_temperature
-        configured._model = model or self._model
-        updates: dict[str, object] = {}
-        if model is not None:
-            updates["model"] = model
-        if temperature is not None:
-            updates["temperature"] = temperature
-        configured._chat = self._chat.model_copy(update=updates)
-        return configured
-
-    async def available_models(self) -> ModelCatalogSnapshot:
-        """Expose the configured Mistral model without calling its authenticated API."""
-        return ModelCatalogSnapshot(models=(self.default_model,), authoritative=False)
-
-    async def generate(self, prompt: str, max_tokens: int | None = None) -> str:
-        """Generate a completion for a prompt.
-
-        Args:
-            prompt: Fully-rendered prompt text.
-            max_tokens: Cap on generated tokens, for calls that only need a
-                short, structured answer. ``None`` leaves it uncapped.
-
-        Returns:
-            The model's response text.
-
-        Raises:
-            LLMError: If the Mistral request fails (network, auth, rate
-                limit, ...).
-        """
-        # Log lengths, not content - same policy as OllamaProvider above.
-        logger.debug(
-            "Mistral generate: model=%r prompt_len=%d max_tokens=%s",
-            self._model,
-            len(prompt),
-            max_tokens,
-        )
-        # Same reasoning as OllamaProvider.generate: max_tokens has to be
-        # set as a field (model_copy), not a .bind() kwarg, to actually
-        # reach the request - see that method's comment for why.
-        chat = (
-            self._chat.model_copy(update={"max_tokens": max_tokens})
-            if max_tokens is not None
-            else self._chat
-        )
-        try:
-            message = await chat.ainvoke(prompt)
-        except Exception as exc:
-            raise LLMError(f"Mistral request to {self._model!r} failed: {exc}") from exc
-
-        content = message.content
-        result = content if isinstance(content, str) else str(content)
-        logger.debug("Mistral generate: model=%r response_len=%d", self._model, len(result))
-        return _require_content(result, self._model, message.response_metadata.get("finish_reason"))
-
-    async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
-        """Generate a completion for a prompt, yielding it token-by-token.
-
-        Args:
-            prompt: Fully-rendered prompt text.
-
-        Yields:
-            Successive text chunks that concatenate to the full response.
-
-        Raises:
-            LLMError: If the Mistral request fails, or the stream ends
-                without a single chunk of visible content. Can surface after
-                some chunks have already been yielded - see
-                ``OllamaProvider.generate_stream``'s docstring, same caveat
-                and same empty-stream handling.
-        """
-        logger.debug("Mistral generate_stream: model=%r prompt_len=%d", self._model, len(prompt))
-        chunk_count = 0
-        finish_reason: str | None = None
-        try:
-            async for chunk in self._chat.astream(prompt):
-                finish_reason = chunk.response_metadata.get("finish_reason", finish_reason)
-                content = chunk.content
-                if not content:
-                    continue
-                chunk_count += 1
-                yield content if isinstance(content, str) else str(content)
-        except Exception as exc:
-            raise LLMError(f"Mistral streaming request to {self._model!r} failed: {exc}") from exc
-        logger.debug("Mistral generate_stream: model=%r chunks=%d", self._model, chunk_count)
-        if chunk_count == 0:
-            _require_content("", self._model, finish_reason)
-
-
+@implements(EmbeddingClient)
 class OllamaEmbedder:
-    """Text embedder backed by a local Ollama embedding model."""
+    """Create embeddings through the configured Ollama endpoint."""
 
     def __init__(self, base_url: str, model: str) -> None:
         self._model = model
@@ -487,4 +336,8 @@ class OllamaEmbedder:
         try:
             return await self._embeddings.aembed_query(text)
         except Exception as exc:
-            raise LLMError(f"Ollama embedding request to {self._model!r} failed: {exc}") from exc
+            logger.warning("Embedding request failed: model=%r error=%s", self._model, exc)
+            raise EmbeddingError(f"Embedding request for {self._model!r} failed: {exc}") from exc
+
+
+__all__ = ["EmbeddingError", "LLMError", "OllamaEmbedder", "OllamaProvider"]

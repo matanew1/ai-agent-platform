@@ -1,11 +1,13 @@
 """FastAPI app assembly and process entry point.
 
 Builds the ASGI app object - wires the lifespan (``app/lifespan.py``, which
-builds ``infrastructure`` adapters and module services), registers
-exception handlers (``app/errors.py``), and mounts each router - and
-exposes ``run()``, the ``uv run app`` entry point that serves it with
-uvicorn. This module, along with ``lifespan.py`` and ``errors.py``, is
-where cross-module imports converge; see ``.claude/rules/architecture.md``.
+builds ``infrastructure`` adapters and module services), registers each
+exception handler (module-specific ones live beside their exception type,
+e.g. ``graph.graph.handle_agent_error``; generic ones live in
+``shared/errors.py``), and mounts each router - and exposes ``run()``, the
+``uv run app`` entry point that serves it with uvicorn. This module, along
+with ``lifespan.py``, is where cross-module imports converge; see
+``.claude/rules/architecture.md``.
 
     HTTP request -> module router -> AgentService -> (RAG, MCP tools) -> LLM -> response
 """
@@ -16,30 +18,32 @@ import logging
 import os
 
 import uvicorn
-from agent.api.auth import get_current_user
-from agent.api.router import documents_router, models_router
-from agent.api.router import router as agents_router
-from agent.graph import AgentError
+from agent.controller import router as agents_router
+from artifact.controller import router as artifacts_router
+from authentication.controller import get_current_user
+from chat.controller import router as chat_router
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from tool.api.router import router as tool_router
+from graph.graph import AgentError, handle_agent_error
+from model.controller import router as models_router
+from rag.controller import router as documents_router
+from tool.controller import router as tool_router
 
-from app.artifacts import router as artifacts_router
-from app.errors import handle_agent_error, handle_not_implemented, handle_platform_error
 from app.health import router as health_router
 from app.lifespan import lifespan
+from shared.errors import handle_not_implemented, handle_platform_error
 from shared.logging import configure_logging
 from shared.types import PlatformError
 
 # Before anything reads os.getenv - which is everything below, plus every
 # default in app/lifespan.py. Without this, .env is inert: `uv run app`
-# doesn't load it, so LLM_PROVIDER/OLLAMA_REASONING/MISTRAL_API_KEY/... all
+# doesn't load it, so OLLAMA_REASONING and every other setting would
 # silently fell back to code defaults no matter what .env said. That was a
 # real bug, not a theoretical one: OLLAMA_REASONING=false never applied, so
 # qwen3 kept its default thinking mode on and consumed the whole
 # _TOOL_CALL_MAX_TOKENS budget on reasoning tokens, making every tool call
-# silently vanish (see infrastructure/llm.py's _require_content).
+# silently vanish (see infrastructure.llm.ollama's _require_content).
 # override=False so a real exported env var still wins over the file.
 load_dotenv(override=False)
 
@@ -53,12 +57,11 @@ app = FastAPI(title="ai-agent-platform", lifespan=lifespan)
 
 # Comma-separated allowlist of origins allowed to call this API
 # cross-origin - e.g. a frontend hosted on a different domain during local
-# development (lovable.app, a dev server on another port, ...). Without
-# this middleware, every browser request from such an origin fails with a
-# CORS error before it ever reaches a route handler. "*" (the default)
-# allows any origin; allow_credentials stays False to keep that default
-# spec-compliant - browsers reject Access-Control-Allow-Credentials: true
-# paired with a wildcard Access-Control-Allow-Origin. Set
+# development. Without this middleware, every browser request from such an
+# origin fails with a CORS error before it ever reaches a route handler.
+# "*" (the default) allows any origin; allow_credentials stays False to
+# keep that default spec-compliant - browsers reject Access-Control-Allow-
+# Credentials: true paired with a wildcard Access-Control-Allow-Origin. Set
 # APP_CORS_ORIGINS to a real allowlist (and allow_credentials=True below,
 # if needed) once this API is called with cookies/credentials.
 _cors_origins = [
@@ -83,11 +86,13 @@ app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
 app.include_router(health_router)
 app.include_router(agents_router)
+app.include_router(chat_router)
 app.include_router(documents_router)
 app.include_router(models_router, dependencies=[Depends(get_current_user)])
 # Tools can perform network and filesystem work, so the composition root
 # protects both registry reads and direct invocation without coupling the
-# standalone ``tool`` module to the agent module's authentication dependency.
+# standalone ``tool`` module to the ``authentication`` module's dependency -
+# same reasoning for ``models_router`` above.
 app.include_router(tool_router, dependencies=[Depends(get_current_user)])
 app.include_router(artifacts_router)
 
@@ -104,6 +109,24 @@ def run() -> None:
         host=host,
         port=port,
         reload=os.getenv("APP_RELOAD", "true").lower() == "true",
+        # Without reload_dirs, uvicorn watches the whole project root -
+        # including gitignored output dirs like artifacts/ and anything
+        # else that gets written to at runtime - so unrelated file churn
+        # (e.g. an artifact the agent just generated) triggers a reload
+        # storm that has nothing to do with source changes. Scope
+        # watching to the actual source trees: the composition root plus
+        # each workspace member's src/.
+        reload_dirs=[
+            "app",
+            "infrastructure",
+            "shared",
+            "modules/agent/src",
+            "modules/rag/src",
+            "modules/tool/src",
+            "modules/artifact/src",
+            "modules/authentication/src",
+            "modules/model/src",
+        ],
     )
 
 

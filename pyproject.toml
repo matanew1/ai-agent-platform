@@ -1,7 +1,7 @@
 [project]
 name = "ai-agent-platform"
 version = "0.6.0"
-description = "Modular-monolith AI agent platform: FastAPI + LangGraph agent, RAG, and a local tool registry over MongoDB/Redis/Qdrant."
+description = "Modular-monolith AI agent platform: FastAPI + LangGraph agent, RAG, and a local tool registry over PostgreSQL/Redis/Qdrant."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,19 +10,25 @@ dependencies = [
     "pydantic>=2.9",
     "langgraph>=0.2",
     "langchain-core>=0.3",
-    "motor>=3.6",
-    "redis>=5.1",
-    "qdrant-client>=1.12",
     "langchain-ollama>=1.1",
-    "langchain-mistralai>=0.2",
     "ollama>=0.6",
+    "qdrant-client>=1.12",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "redis>=5.1",
     "pypdf>=6.15.0",
     "python-docx>=1.2.0",
-    "pyjwt[crypto]>=2.10,<3",
     "agent",
     "rag",
     "tool",
+    "artifact",
+    "authentication",
+    "model",
+    "graph",
+    "chat",
+    "session",
     "python-dotenv>=1.0",
+    "alembic>=1.14",
 ]
 
 # `uv run app` -> runs the entry point below (see app/main.py:run).
@@ -45,6 +51,12 @@ members = ["modules/*"]
 agent = { workspace = true }
 rag = { workspace = true }
 tool = { workspace = true }
+artifact = { workspace = true }
+authentication = { workspace = true }
+model = { workspace = true }
+graph = { workspace = true }
+chat = { workspace = true }
+session = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

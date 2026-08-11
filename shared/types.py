@@ -104,7 +104,7 @@ class ChatMessage(BaseModel):
     """One turn of a conversation.
 
     Used both for conversation history (``SessionCheckpoint.history``,
-    ``agent.graph.AgentState.history``) and for API request/response bodies
+    ``graph.state.AgentState.history``) and for API request/response bodies
     that need to carry a turn - a generic enough shape for either.
 
     Attributes:
@@ -127,7 +127,7 @@ class ChatMessage(BaseModel):
 class SessionCheckpoint(BaseModel):
     """Persisted agent session state, durably keyed by session id.
 
-    MongoDB owns the durable copy; Redis holds only a short-lived hot cache
+    PostgreSQL owns the durable copy; Redis holds only a short-lived hot cache
     and the distributed lock (see ``infrastructure/sessions.py``). The
     checkpoint is read/written through the ``Memory`` port. Loaded at the start of a turn to seed
     ``AgentState.history`` and saved at the end with that turn appended -
@@ -157,7 +157,7 @@ class IndexedDocument(BaseModel):
     chunks_indexed: int = Field(ge=1)
 
 
-class AgentDefinition(BaseModel):
+class Agent(BaseModel):
     """A versioned, user-owned configuration for one conversational agent.
 
     Runtime services are derived from this persistent definition and cached
