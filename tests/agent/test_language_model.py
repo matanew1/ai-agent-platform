@@ -1,9 +1,9 @@
-"""Unit tests for infrastructure.llm's empty-completion guard.
+"""Unit tests for the Ollama language-model adapter.
 
 ``_require_content`` is a pure function over a provider's already-returned
 text, so it needs neither a live LLM nor a mocked SDK internal to test - the
-provider classes around it still have no committed test (they'd need a real
-Ollama/Mistral call, see .claude/rules/testing.md).
+provider class around it still has no committed test (it needs a real Ollama
+call; see .claude/rules/testing.md).
 
 Regression coverage for a real bug: a reasoning-capable model with thinking
 enabled spent the whole ``_TOOL_CALL_MAX_TOKENS`` budget on reasoning
@@ -16,9 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from infrastructure.llm import (
+from infrastructure.llm.ollama import (
     LLMError,
-    MistralProvider,
     OllamaProvider,
     _require_content,
     _supports_chat_model,
@@ -47,19 +46,13 @@ def test_truncated_completion_explains_the_token_cap() -> None:
 
 
 def test_error_names_the_model_when_there_is_no_stop_reason() -> None:
-    with pytest.raises(LLMError, match="mistral-small-latest"):
-        _require_content("", "mistral-small-latest", None)
+    with pytest.raises(LLMError, match="qwen3:8b"):
+        _require_content("", "qwen3:8b", None)
 
 
 @pytest.mark.parametrize(
     ("provider", "model"),
-    [
-        (OllamaProvider(base_url="http://localhost:11434", model="qwen3:8b"), "qwen3:14b"),
-        (
-            MistralProvider(api_key="test-key", model="mistral-small-latest"),
-            "mistral-medium-latest",
-        ),
-    ],
+    [(OllamaProvider(base_url="http://localhost:11434", model="qwen3:8b"), "qwen3:14b")],
 )
 def test_generation_options_clone_provider_without_mutating_base(
     provider: object, model: str
@@ -105,16 +98,3 @@ async def test_ollama_catalog_caches_discovery_for_repeated_configuration_reads(
 
     assert first is second
     assert calls == 1
-
-
-async def test_mistral_catalog_exposes_only_configured_model_without_discovery() -> None:
-    provider = MistralProvider(api_key="test-key", model="mistral-small-latest")
-
-    snapshot = await provider.available_models()
-
-    assert provider.provider_name == "mistralai"
-    assert provider.default_temperature == 0.3
-    assert snapshot == ModelCatalogSnapshot(
-        models=("mistral-small-latest",),
-        authoritative=False,
-    )

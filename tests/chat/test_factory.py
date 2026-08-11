@@ -1,14 +1,18 @@
-"""Unit tests for agent.runtime.OwnerScopedRetriever."""
+"""Unit tests for chat.factory.AgentRuntimeFactory and graph.graph.OwnerScopedRetriever."""
 
 from __future__ import annotations
 
-from agent.runtime import AgentRuntimeFactory, OwnerScopedRetriever
+from chat.factory import AgentRuntimeFactory
+from graph.graph import OwnerScopedRetriever
 
-from shared.types import AgentDefinition, Chunk
+from shared.types import Agent, Chunk
 
 
 class FakeRetriever:
-    """Fake satisfying agent.ports.Retriever, recording the filter it was called with."""
+    """Fake satisfying rag.service.RAGService's search shape.
+
+    Records the filter it was called with.
+    """
 
     def __init__(self, chunks: list[Chunk] | None = None) -> None:
         self._chunks = chunks if chunks is not None else [Chunk(id="1", text="doc", score=0.9)]
@@ -61,7 +65,7 @@ def test_runtime_applies_generation_options_once_per_definition_version() -> Non
         memory=object(),
         tool_registry=object(),
     )
-    definition = AgentDefinition(
+    definition = Agent(
         owner_id="owner-1",
         name="Researcher",
         system_prompt="Research carefully.",

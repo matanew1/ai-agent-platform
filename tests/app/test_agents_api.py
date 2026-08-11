@@ -6,15 +6,18 @@ import base64
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
-from agent.api.router import documents_router, models_router, router
-from agent.definitions import AgentDefinitionService
-from agent.service import ChatStreamMetadata
+from agent.controller import router
+from agent.service import AgentService
+from chat.controller import router as chat_router
+from chat.service import ChatStreamMetadata
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from model.controller import router as models_router
+from rag.controller import router as documents_router
 
 from shared.auth import AuthenticatedUser, AuthenticationError
 from shared.types import (
-    AgentDefinition,
+    Agent,
     ArtifactReference,
     ChatMessage,
     IndexedDocument,
@@ -26,20 +29,20 @@ from shared.types import (
 
 class _Repository:
     def __init__(self) -> None:
-        self.items: dict[str, AgentDefinition] = {}
+        self.items: dict[str, Agent] = {}
 
-    async def create(self, definition: AgentDefinition) -> AgentDefinition:
+    async def create(self, definition: Agent) -> Agent:
         self.items[definition.id] = definition
         return definition
 
-    async def get(self, owner_id: str, agent_id: str) -> AgentDefinition | None:
+    async def get(self, owner_id: str, agent_id: str) -> Agent | None:
         item = self.items.get(agent_id)
         return item if item is not None and item.owner_id == owner_id else None
 
-    async def list(self, owner_id: str) -> list[AgentDefinition]:
+    async def list(self, owner_id: str) -> list[Agent]:
         return [item for item in self.items.values() if item.owner_id == owner_id]
 
-    async def save(self, definition: AgentDefinition) -> bool:
+    async def save(self, definition: Agent) -> bool:
         self.items[definition.id] = definition
         return True
 
@@ -50,7 +53,7 @@ class _Repository:
         return True
 
 
-class _ToolRegistry:
+class _ToolService:
     def get_tools(self) -> list[ToolDefinition]:
         return [ToolDefinition(name="fetch", description="Fetches a URL.")]
 
@@ -68,7 +71,7 @@ class _ModelCatalog:
 
 
 class _DocumentIndex:
-    """Fake satisfying agent.ports.DocumentLibrary."""
+    """Fake satisfying rag.service.RAGService's document-library shape."""
 
     def __init__(self) -> None:
         self.ingested: list[dict[str, object]] = []
@@ -123,8 +126,8 @@ class _Memory:
         return self.items.pop(session_id, None) is not None
 
 
-class _AgentService:
-    """Fake satisfying the run_stream slice of agent.service.AgentService."""
+class _ChatService:
+    """Fake satisfying the run_stream slice of chat.service.ChatService."""
 
     def __init__(self) -> None:
         self.received_attachments: list[tuple[str, str]] | None = None
@@ -156,10 +159,10 @@ class _AgentService:
 
 
 class _RuntimeFactory:
-    def __init__(self, service: _AgentService) -> None:
+    def __init__(self, service: _ChatService) -> None:
         self._service = service
 
-    def get(self, definition: AgentDefinition) -> _AgentService:
+    def get(self, definition: Agent) -> _ChatService:
         return self._service
 
 
@@ -172,7 +175,7 @@ class _Authenticator:
         return AuthenticatedUser(id=token)
 
 
-class _ArtifactAccess:
+class _ArtifactService:
     def __init__(self) -> None:
         self.grants: list[tuple[str, list[ArtifactReference]]] = []
 
@@ -186,14 +189,14 @@ class _ArtifactAccess:
         )
 
 
-def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, _AgentService]:
+def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, _ChatService]:
     app = FastAPI()
     document_index = _DocumentIndex()
-    agent_service = _AgentService()
+    agent_service = _ChatService()
     model_catalog = _ModelCatalog()
-    app.state.agent_definition_service = AgentDefinitionService(
+    app.state.agent_service = AgentService(
         _Repository(),
-        _ToolRegistry(),
+        _ToolService(),
         model_catalog,
     )
     app.state.rag_service = document_index
@@ -201,8 +204,9 @@ def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, 
     app.state.agent_runtime_factory = _RuntimeFactory(agent_service)
     app.state.model_catalog = model_catalog
     app.state.authenticator = _Authenticator()
-    app.state.artifact_access = _ArtifactAccess()
+    app.state.artifact_service = _ArtifactService()
     app.include_router(router)
+    app.include_router(chat_router)
     app.include_router(documents_router)
     app.include_router(models_router)
     headers = {"Authorization": "Bearer owner-1"} if authenticated else None
@@ -314,7 +318,7 @@ def test_model_catalog_exposes_frontend_configuration_contract() -> None:
 
 def test_documents_are_owner_scoped_not_nested_under_agents() -> None:
     """Documents belong to owner_id, not to one agent - see
-    agent.api.router's module docstring."""
+    agent.controller's module docstring."""
     paths = _client()[0].app.openapi()["paths"]
 
     assert "/documents/text" in paths
@@ -504,9 +508,9 @@ def test_chat_stream_extracts_and_forwards_attached_files() -> None:
     assert response.headers["X-Artifacts"] == (
         '[{"filename": "profile.pdf", "download_url": "/artifacts/profile.pdf"}]'
     )
-    artifact_access: _ArtifactAccess = client.app.state.artifact_access
-    assert artifact_access.grants[0][0] == "owner-1"
-    assert [artifact.filename for artifact in artifact_access.grants[0][1]] == ["profile.pdf"]
+    artifact_service: _ArtifactService = client.app.state.artifact_service
+    assert artifact_service.grants[0][0] == "owner-1"
+    assert [artifact.filename for artifact in artifact_service.grants[0][1]] == ["profile.pdf"]
     assert agent_service.received_attachments == [("notes.txt", "attached plain text")]
 
 

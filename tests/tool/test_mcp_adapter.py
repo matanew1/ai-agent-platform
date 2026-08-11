@@ -1,11 +1,11 @@
-"""Unit tests for tool.mcp.adapter.McpServerAdapter.
+"""Unit tests for tool.tools.mcp.adapter.McpServerAdapter.
 
 Mocked at the ClientSession boundary - the actual stdio connection
 (`McpServerAdapter.connect`) is I/O, the same kind of thing verified live
 rather than unit-tested elsewhere in this project (see
 `.claude/rules/testing.md`'s treatment of infrastructure adapters). What's
 tested here is `list_tools` and the handlers it builds, fed a
-hand-written fake session - the adapter doesn't know what a ToolRegistry
+hand-written fake session - the adapter doesn't know what a ToolService
 is, so there's nothing to mock beyond the session itself.
 """
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 from mcp.types import CallToolResult, ListToolsResult, TextContent, Tool
-from tool.mcp.adapter import McpServerAdapter
+from tool.tools.mcp.adapter import McpServerAdapter
 
 
 class FakeClientSession:
@@ -74,7 +74,7 @@ async def test_adapted_tool_calls_the_remote_tool_and_flattens_text_content() ->
 
 
 async def test_adapted_tool_raises_when_the_remote_tool_reports_an_error() -> None:
-    """ToolRegistry.call_tool turns a raised exception into
+    """ToolService.call_tool turns a raised exception into
     ToolResult(is_error=True, ...) - see registry.py - so the handler
     raises here rather than returning error content directly.
     """

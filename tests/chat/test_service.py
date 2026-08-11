@@ -1,4 +1,4 @@
-"""Unit tests for the streaming-only ``agent.service.AgentService``."""
+"""Unit tests for the streaming-only ``chat.service.ChatService``."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import pytest
-from agent.graph import AgentError
-from agent.service import AgentService
+from chat.service import ChatService
+from graph.graph import AgentError
 
 from shared.types import ChatMessage, Chunk, SessionCheckpoint, ToolDefinition, ToolResult
 
@@ -58,7 +58,7 @@ class FakeRetriever:
         return self._chunks
 
 
-class FakeToolRegistry:
+class FakeToolService:
     """Tool-registry fake with an ``echo`` tool available by default."""
 
     def __init__(self, extra_tools: list[ToolDefinition] | None = None) -> None:
@@ -113,14 +113,14 @@ def _make_service(
     llm: FakeLLMProvider | None = None,
     retriever: FakeRetriever | None = None,
     memory: FakeMemory | None = None,
-    tool_registry: FakeToolRegistry | None = None,
-) -> tuple[AgentService, FakeLLMProvider, FakeRetriever, FakeMemory, FakeToolRegistry]:
+    tool_registry: FakeToolService | None = None,
+) -> tuple[ChatService, FakeLLMProvider, FakeRetriever, FakeMemory, FakeToolService]:
     llm = llm or FakeLLMProvider()
     retriever = retriever or FakeRetriever()
     memory = memory or FakeMemory()
-    tool_registry = tool_registry or FakeToolRegistry()
+    tool_registry = tool_registry or FakeToolService()
     return (
-        AgentService(llm=llm, retriever=retriever, memory=memory, tool_registry=tool_registry),
+        ChatService(llm=llm, retriever=retriever, memory=memory, tool_registry=tool_registry),
         llm,
         retriever,
         memory,
@@ -174,7 +174,7 @@ async def test_generate_pdf_uses_retrieved_context_and_conversation_history() ->
             "required": ["text"],
         },
     )
-    tools = FakeToolRegistry(extra_tools=[pdf_tool])
+    tools = FakeToolService(extra_tools=[pdf_tool])
     llm = FakeLLMProvider(
         artifact_content="Matan Bardugo is a backend engineer in Israel.",
         answer="Created: /artifacts/matan-bardugo.pdf",
@@ -225,7 +225,7 @@ async def test_generate_pdf_uses_retrieved_context_and_conversation_history() ->
 
 async def test_generate_pdf_respects_the_tool_allowlist() -> None:
     pdf_tool = ToolDefinition(name="generate_pdf", description="Create a PDF.")
-    tools = FakeToolRegistry(extra_tools=[pdf_tool])
+    tools = FakeToolService(extra_tools=[pdf_tool])
     service, *_ = _make_service(tool_registry=tools)
 
     with pytest.raises(AgentError, match="disabled for this agent"):
@@ -239,7 +239,7 @@ async def test_generate_pdf_respects_the_tool_allowlist() -> None:
 
 
 async def test_run_stream_honors_the_tool_allowlist() -> None:
-    tools = FakeToolRegistry(extra_tools=[ToolDefinition(name="shout", description="Shouts.")])
+    tools = FakeToolService(extra_tools=[ToolDefinition(name="shout", description="Shouts.")])
     llm = FakeLLMProvider(tool_call={"name": "shout", "arguments": {"x": 1}})
     service, *_ = _make_service(llm=llm, tool_registry=tools)
 

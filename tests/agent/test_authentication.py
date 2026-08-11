@@ -5,18 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+import authentication.repository as auth_module
 import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
-from jwt.exceptions import PyJWKClientConnectionError
-
-import infrastructure.auth as auth_module
-from infrastructure.auth import (
+from authentication.repository import (
     AuthSettings,
     DevelopmentAuthenticator,
     JWKSAuthenticator,
     build_authenticator_from_env,
 )
+from cryptography.hazmat.primitives.asymmetric import rsa
+from jwt.exceptions import PyJWKClientConnectionError
+
 from shared.auth import AuthenticationError, AuthenticationUnavailableError
 
 _ISSUER = "https://api.workos.com"

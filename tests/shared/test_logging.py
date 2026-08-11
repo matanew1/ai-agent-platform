@@ -12,9 +12,9 @@ from shared.logging import ColoredFormatter, _resolve_color_mode, _resolve_level
 def _record(level: int, message: str = "database unavailable") -> logging.LogRecord:
     """Build a representative application log record."""
     return logging.LogRecord(
-        name="infrastructure.database",
+        name="infrastructure.database.postgres",
         level=level,
-        pathname="/project/infrastructure/database.py",
+        pathname="/project/infrastructure/database/postgres.py",
         lineno=48,
         msg=message,
         args=(),
@@ -30,8 +30,8 @@ def test_debug_format_includes_source_location() -> None:
 
     assert "DEBUG" in rendered
     assert " │ [ infrastructure.… ] │ " in rendered
-    assert " │ [ database.py:48 ] │ " in rendered
-    assert "database.py:48" in rendered
+    assert " │ [ postgres.py:48 ] │ " in rendered
+    assert "postgres.py:48" in rendered
     assert "database unavailable" in rendered
 
 
@@ -44,10 +44,10 @@ def test_colored_formatter_does_not_mutate_shared_record() -> None:
 
     assert "\033[31mERROR \033[0m" in rendered
     assert "[ \033[31minfrastructure.…\033[0m ]" in rendered
-    assert "[ \033[35mdatabase.py\033[0m:48 ]" in rendered
+    assert "[ \033[35mpostgres.py\033[0m:48 ]" in rendered
     assert record.levelname == "ERROR"
-    assert record.name == "infrastructure.database"
-    assert record.filename == "database.py"
+    assert record.name == "infrastructure.database.postgres"
+    assert record.filename == "postgres.py"
 
 
 @pytest.mark.parametrize(

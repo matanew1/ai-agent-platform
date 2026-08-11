@@ -1,4 +1,4 @@
-"""Unit tests for Redis session checkpoint listing."""
+"""Unit tests for generic cache key scanning."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from infrastructure.redis import RedisError, RedisSessionStore
+from infrastructure.cache.redis import RedisCache
+from infrastructure.errors import CacheError
 from shared.types import SessionCheckpoint
 
 
@@ -54,10 +55,16 @@ async def test_list_checkpoints_scans_prefix_and_sorts_newest_first() -> None:
             "agent_session:owner:agent:newer": newer.model_dump_json(),
         }
     )
-    store = RedisSessionStore("redis://unused")
+    store = RedisCache("redis://unused")
     store._client = client
 
-    checkpoints = await store.list_checkpoints("owner:agent:")
+    keys = await store.scan("agent_session:owner:agent:")
+    checkpoints = [
+        SessionCheckpoint.model_validate_json(value)
+        for value in await store.mget(keys)
+        if value is not None
+    ]
+    checkpoints.sort(key=lambda checkpoint: checkpoint.updated_at, reverse=True)
 
     assert [checkpoint.session_id for checkpoint in checkpoints] == [
         "owner:agent:newer",
@@ -67,20 +74,25 @@ async def test_list_checkpoints_scans_prefix_and_sorts_newest_first() -> None:
 
 
 async def test_list_checkpoints_translates_redis_failures() -> None:
-    store = RedisSessionStore("redis://unused")
+    store = RedisCache("redis://unused")
     store._client = _RedisClient({}, failure=RuntimeError("connection lost"))
 
-    with pytest.raises(RedisError, match="Failed to list checkpoints"):
-        await store.list_checkpoints("owner:agent:")
+    with pytest.raises(CacheError, match="Failed to scan cache keys"):
+        await store.scan("agent_session:owner:agent:")
 
 
 async def test_list_checkpoints_escapes_glob_characters_in_the_prefix() -> None:
     checkpoint = SessionCheckpoint(session_id="owner*?:agent:session")
     client = _RedisClient({"agent_session:owner*?:agent:session": checkpoint.model_dump_json()})
-    store = RedisSessionStore("redis://unused")
+    store = RedisCache("redis://unused")
     store._client = client
 
-    checkpoints = await store.list_checkpoints("owner*?:agent:")
+    keys = await store.scan("agent_session:owner*?:agent:")
+    checkpoints = [
+        SessionCheckpoint.model_validate_json(value)
+        for value in await store.mget(keys)
+        if value is not None
+    ]
 
     assert [item.session_id for item in checkpoints] == ["owner*?:agent:session"]
     assert client.patterns == [(r"agent_session:owner\*\?:agent:*", 100)]
