@@ -12,6 +12,38 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.6.0](https://github.com/matanew1/ai-agent-platform/compare/v0.5.1...v0.6.0) (2026-08-11)
+
+
+### Changed
+
+* **agent:** merge agent+agents into one module, flatten internal/ repo-wide ([883ad44](https://github.com/matanew1/ai-agent-platform/commit/883ad44cb9669d3d07c458b9efff2a7ef41a3bc7))
+* isolate public agents module ([93bc44b](https://github.com/matanew1/ai-agent-platform/commit/93bc44b586d6c8db95b4e9b7142e21993aa04840))
+* make agents the only public API ([7278547](https://github.com/matanew1/ai-agent-platform/commit/72785476abe5335e60585881109b77c91346c35e))
+* remove private admin API routes ([c20ca58](https://github.com/matanew1/ai-agent-platform/commit/c20ca584cfdb47397653a30b08ea54e16ea9986c))
+
+
+### Documentation
+
+* **env:** document APP_CORS_ORIGINS in .env.example ([5581a1f](https://github.com/matanew1/ai-agent-platform/commit/5581a1ff6f9224536a025343a69824252428fe61))
+* refresh CLAUDE.md, README, and rule docs for the merged agent module ([4ee847b](https://github.com/matanew1/ai-agent-platform/commit/4ee847b3a9b0c163c34ce3e8e0863d0c6e4d3661))
+
+
+### Added
+
+* add configurable agent definitions ([4e9c29b](https://github.com/matanew1/ai-agent-platform/commit/4e9c29b08600b888a9820603b7fe317e47b5b7fb))
+* **agent:** track artifacts generated during a turn, guard tool routes ([09f21ff](https://github.com/matanew1/ai-agent-platform/commit/09f21ff9cd02774855edc0b29b88ad834e33c742))
+* **app:** add CORS middleware for cross-origin API access ([f2d7ff1](https://github.com/matanew1/ai-agent-platform/commit/f2d7ff131689acd00c8f5f48044b23ab36cb3bbf))
+* **app:** bearer-JWT authentication, model selection, sessions, and generated-file artifacts ([e05b597](https://github.com/matanew1/ai-agent-platform/commit/e05b59715bcefa6cecbae59dac79f59205e1655d))
+* label private APIs in swagger ([f762c16](https://github.com/matanew1/ai-agent-platform/commit/f762c16d98cba6b5c56e4aa30f5dfbdb182e5cda))
+
+
+### Fixed
+
+* **app:** require ownership to download generated artifacts ([ef17d25](https://github.com/matanew1/ai-agent-platform/commit/ef17d2553556532dfcbf4f860e110e798e5dd335))
+* **infrastructure:** tolerate a session-cache outage without losing history ([5ae22f2](https://github.com/matanew1/ai-agent-platform/commit/5ae22f25b5b2fa7edc233607e71b0e8250157756))
+* keep fetch mcp stdout protocol clean ([0437ac4](https://github.com/matanew1/ai-agent-platform/commit/0437ac437ee44f917517ab65a157b4763dc5a0d8))
+
 ### [0.5.1](https://github.com/matanew1/ai-agent-platform/compare/v0.5.0...v0.5.1) (2026-08-08)
 
 
