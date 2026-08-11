@@ -1,18 +1,18 @@
-"""Unit tests for rag.internal.reranker.rerank_chunks.
+"""Unit tests for rag.reranker.rerank_chunks.
 
-Fake satisfying rag.internal.ports.LLMProvider - no real LLM involved.
+Fake satisfying rag.ports.LLMProvider - no real LLM involved.
 See .claude/rules/testing.md.
 """
 
 from __future__ import annotations
 
-from rag.internal.reranker import rerank_chunks
+from rag.reranker import rerank_chunks
 
 from shared.types import Chunk
 
 
 class FakeLLMProvider:
-    """Fake satisfying rag.internal.ports.LLMProvider.
+    """Fake satisfying rag.ports.LLMProvider.
 
     Args:
         response: Text returned from every ``generate`` call. ``None``

@@ -24,7 +24,7 @@ class QdrantError(PlatformError):
 class QdrantVectorStore:
     """Async Qdrant-backed vector store.
 
-    Satisfies ``rag.internal.ports.VectorStore`` structurally - no inheritance from
+    Satisfies ``rag.ports.VectorStore`` structurally - no inheritance from
     that protocol is required.
 
     Args:
@@ -55,7 +55,7 @@ class QdrantVectorStore:
             the collection hasn't been created yet (nothing indexed via
             ``upsert``/``ensure_collection`` so far) - a fresh deployment
             with no documents ingested is a normal state, not a failure,
-            so callers (``agent.internal.graph.retrieve_context``) get
+            so callers (``agent.graph.retrieve_context``) get
             "no context" rather than an error for it.
         """
         logger.debug("search: collection=%r top_k=%d", self._collection_name, top_k)
@@ -117,6 +117,66 @@ class QdrantVectorStore:
         except Exception as exc:
             raise QdrantError(
                 f"Failed to upsert into collection {self._collection_name!r}: {exc}"
+            ) from exc
+
+    async def list_chunks(self, metadata_filter: dict[str, str]) -> list[Chunk]:
+        """List all chunks matching exact metadata values, without vectors."""
+        try:
+            if not await self._client.collection_exists(self._collection_name):
+                return []
+
+            chunks: list[Chunk] = []
+            offset: models.ExtendedPointId | None = None
+            while True:
+                points, offset = await self._client.scroll(
+                    collection_name=self._collection_name,
+                    scroll_filter=_metadata_filter(metadata_filter),
+                    limit=100,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                chunks.extend(
+                    Chunk(
+                        id=str(point.payload.get("chunk_id", point.id)),
+                        text=str(point.payload.get("text", "")),
+                        score=0.0,
+                        metadata=dict(point.payload.get("metadata", {})),
+                    )
+                    for point in points
+                )
+                if offset is None:
+                    return chunks
+        except Exception as exc:
+            raise QdrantError(
+                f"Failed to list chunks in collection {self._collection_name!r}: {exc}"
+            ) from exc
+
+    async def delete_chunks(self, metadata_filter: dict[str, str]) -> int:
+        """Delete chunks matching exact metadata values and return their count."""
+        # A missing filter must never degrade into a collection-wide delete.
+        if not metadata_filter:
+            return 0
+        try:
+            if not await self._client.collection_exists(self._collection_name):
+                return 0
+            point_filter = _metadata_filter(metadata_filter)
+            count = await self._client.count(
+                collection_name=self._collection_name,
+                count_filter=point_filter,
+                exact=True,
+            )
+            if count.count == 0:
+                return 0
+            await self._client.delete(
+                collection_name=self._collection_name,
+                points_selector=point_filter,
+                wait=True,
+            )
+            return count.count
+        except Exception as exc:
+            raise QdrantError(
+                f"Failed to delete chunks from collection {self._collection_name!r}: {exc}"
             ) from exc
 
     async def ensure_collection(self, vector_size: int) -> None:

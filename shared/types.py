@@ -7,6 +7,7 @@ this belongs inside the module that owns the concept.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
@@ -22,6 +23,20 @@ class PlatformError(Exception):
     ``PlatformError`` at the API boundary without knowing which module
     raised it. See ``.claude/rules/python-style.md``.
     """
+
+
+@dataclass(frozen=True, slots=True)
+class ModelCatalogSnapshot:
+    """One provider model-discovery result.
+
+    ``authoritative`` distinguishes a successful provider inventory from a
+    safe fallback returned while discovery is unavailable. Agent-definition
+    writes only reject an unknown model against an authoritative snapshot,
+    so a temporary Ollama outage cannot make an otherwise valid edit fail.
+    """
+
+    models: tuple[str, ...]
+    authoritative: bool
 
 
 class Chunk(BaseModel):
@@ -78,40 +93,68 @@ class ToolResult(BaseModel):
     is_error: bool = False
 
 
+class ArtifactReference(BaseModel):
+    """Public metadata for a generated file that can be downloaded by a client."""
+
+    filename: str
+    download_url: str
+
+
 class ChatMessage(BaseModel):
     """One turn of a conversation.
 
     Used both for conversation history (``SessionCheckpoint.history``,
-    ``agent.internal.graph.AgentState.history``) and for API request/response bodies
+    ``agent.graph.AgentState.history``) and for API request/response bodies
     that need to carry a turn - a generic enough shape for either.
 
     Attributes:
         role: Who said it.
         content: The message text.
+        tools_invoked: Tools used to prepare an assistant response.
+        chunks_retrieved: Retrieved context count for an assistant response.
+        prep_time_seconds: Retrieval/tool preparation duration, when measured.
+        artifacts: Downloadable files generated for this assistant response.
     """
 
     role: Literal["user", "assistant"]
     content: str
+    tools_invoked: list[str] = Field(default_factory=list)
+    chunks_retrieved: int = Field(default=0, ge=0)
+    prep_time_seconds: float | None = Field(default=None, ge=0)
+    artifacts: list[ArtifactReference] = Field(default_factory=list)
 
 
 class SessionCheckpoint(BaseModel):
-    """Persisted agent session state, keyed by session id in Redis.
+    """Persisted agent session state, durably keyed by session id.
 
-    Stored as ``agent_session:{session_id}`` (see
-    ``infrastructure/redis.py``) and read/written through the ``Memory``
-    port that ``agent`` depends on. Loaded at the start of a turn to seed
+    MongoDB owns the durable copy; Redis holds only a short-lived hot cache
+    and the distributed lock (see ``infrastructure/sessions.py``). The
+    checkpoint is read/written through the ``Memory`` port. Loaded at the start of a turn to seed
     ``AgentState.history`` and saved at the end with that turn appended -
     see ``agent.service.AgentService.run``.
 
     Attributes:
         session_id: Conversation/session identifier.
-        history: Prior turns, oldest first.
+        history: Recent context-window turns, oldest first. AgentService
+            bounds this to its configured message ceiling before saving.
         updated_at: Last time this checkpoint was written.
     """
 
     session_id: str
     history: list[ChatMessage] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class IndexedDocument(BaseModel):
+    """One successfully indexed source in the shared document library.
+
+    Vector stores persist one point per chunk, while API consumers reason
+    about whole source documents. ``RAGService.list_documents`` aggregates
+    those points into this source-level shape.
+    """
+
+    source_id: str
+    chunks_indexed: int = Field(ge=1)
 
 
 class AgentDefinition(BaseModel):
@@ -125,8 +168,11 @@ class AgentDefinition(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     owner_id: str
     name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, min_length=1, max_length=500)
     system_prompt: str = Field(min_length=1, max_length=8_000)
     allowed_tools: list[str] = Field(default_factory=list)
+    model: str | None = Field(default=None, min_length=1, max_length=200)
+    temperature: float | None = Field(default=None, ge=0, le=2)
     version: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

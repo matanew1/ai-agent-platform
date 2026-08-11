@@ -15,10 +15,11 @@ dependencies = [
     "qdrant-client>=1.12",
     "langchain-ollama>=1.1",
     "langchain-mistralai>=0.2",
+    "ollama>=0.6",
     "pypdf>=6.15.0",
     "python-docx>=1.2.0",
+    "pyjwt[crypto]>=2.10,<3",
     "agent",
-    "agents",
     "rag",
     "tool",
     "python-dotenv>=1.0",
@@ -42,7 +43,6 @@ members = ["modules/*"]
 
 [tool.uv.sources]
 agent = { workspace = true }
-agents = { workspace = true }
 rag = { workspace = true }
 tool = { workspace = true }
 

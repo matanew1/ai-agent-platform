@@ -16,39 +16,81 @@ between business logic and the infrastructure that backs it.
 - Python 3.12, [uv](https://docs.astral.sh/uv/) for dependency management and running
 - FastAPI — HTTP boundary
 - LangGraph — agent orchestration / state machines
-- LangChain — LLM & tool abstractions
-- MongoDB — document persistence
-- Redis — cache, short-lived state, pub/sub
+- LangChain — LLM & tool abstractions (`ChatOllama`, `ChatMistralAI`, `OllamaEmbeddings` - see `infrastructure/llm.py`)
+- MongoDB — document persistence (agent definitions)
+- Redis — cache, short-lived state, agent session memory
 - Qdrant — vector store for RAG
+- Model Context Protocol (MCP) — external tool servers: `fetch`, `time`, `duckduckgo` (see `tool/mcp/`)
 
 **Architecture:** see [architecture rules](.claude/rules/architecture.md) for
 the full dependency-direction contract. In short:
 
 ```
-app  →  agent  →  rag / tool  →  infrastructure
+app
+ └─ agent      (LangGraph workflow + versioned agent definitions + the public /agents HTTP surface, one module)
+     └─ rag / tool
+         └─ infrastructure
 ```
 
-`infrastructure` never imports from `modules/*`. `modules/agent` never imports
-a database/cache/vector-store client directly — only through an interface
-(`Protocol`) it defines itself in `agent/internal/ports.py`, implemented in
-`infrastructure` and wired together at the composition root
-(`app/lifespan.py`). Everything wired there is a singleton for the
-process's lifetime - built once, never per-request; see
+`infrastructure` never imports from `modules/*`. `agent` and `rag` never
+import a database/cache/vector-store client, or a sibling module's
+concrete class, directly — only through an interface (`Protocol`) each
+owns in its own `ports.py`, implemented in `infrastructure`/`rag` and wired
+together at the composition root (`app/lifespan.py`). Everything wired
+there is a singleton for the process's lifetime - built once, never
+per-request - with one deliberate exception: `agent.runtime.AgentRuntimeFactory`
+lazily compiles (and caches) one `AgentService` per agent-definition
+version on first use, since definitions are created/edited at runtime and
+there's no fixed set to pre-compile at startup. See
 [architecture.md](.claude/rules/architecture.md#dependency-injection).
 
 **Implementation status:** `agent`, `rag`, and `tool` are all fully
-implemented - a real LangGraph workflow ([`retrieve_context`
-|| `execute_tools`] -> `generate_answer`, the first two in parallel) calling
-a real LLM, real retrieval/ingestion against a real Qdrant collection, and
-a real local tool registry (pdf/markdown extraction, plus a `fetch` tool
-adapted from external MCP servers - see
-[tool-conventions.md](.claude/rules/tool-conventions.md)). All three are
-verified against live services, not just unit-tested. The app also supports
-versioned, persisted agent definitions through `/agents`: each definition has
-an independent prompt, tool allowlist, RAG document scope, and Redis session
-namespace. MongoDB CRUD is implemented and verified at startup with a ping.
-Authentication is intentionally disabled; the caller-provided `owner_id` is
-only a local-development scope and must not be treated as authorization.
+implemented, not scaffolding - a real LangGraph workflow
+(`retrieve_context` -> `execute_tools` -> streamed `generate_answer`, with
+retrieval feeding context-aware tool execution) calling a real LLM
+(`LLM_PROVIDER=ollama`, local via
+`ChatOllama` - including Ollama's hosted cloud models, e.g.
+`OLLAMA_MODEL=minimax-m3:cloud` - or `mistralai`, remote via
+`ChatMistralAI`; both real, picked in `app/lifespan.py`'s
+`_build_llm_provider`), real retrieval/ingestion against a real Qdrant
+collection (optionally reranked by that same LLM before results are
+returned, on by default - see architecture.md's "Reranking"), and a real
+tool registry: local pdf/markdown extraction/generation/editing plus three
+tools adapted from external MCP servers (`fetch`, `time`, `duckduckgo` -
+see [tool-conventions.md](.claude/rules/tool-conventions.md), which also
+documents two servers evaluated and deliberately left disabled, `sqlite`
+and `git`, and the measured tool-selection-accuracy method behind both
+calls). All of it is verified against live services, not just unit-tested.
+`agent` persists versioned agent definitions through `/agents`: each has an
+independent prompt and tool allowlist, plus a Redis session namespace, with
+a streaming chat route (`/agents/{agent_id}/chat/stream`, which also
+accepts optional ephemeral file attachments folded into that turn's answer
+only). Documents live in a separate, user-scoped library (`/documents`,
+`/documents/file` - not nested under `/agents/{agent_id}`) shared by every
+agent belonging to the authenticated user, rather than tied to one agent. CORS is
+configurable via `APP_CORS_ORIGINS` (`app/main.py`). MongoDB CRUD is
+implemented and
+verified at startup with a ping. WorkOS AuthKit bearer JWTs are verified
+through cached JWKS; the verified `sub` is the only source of ownership, and
+the app composition root also protects model-catalog and tool-registry access.
+Direct `POST /tools/{name}` still bypasses the agent's own tool-call mediation,
+which matters most for the filesystem tools
+(`extract_pdf`/`extract_markdown`/`generate_pdf`/`edit_pdf`/
+`generate_markdown`/`edit_markdown` - arbitrary local path, no sandboxing
+today, and four of the six can write, not just read).
+
+**History:** `agent` (private LangGraph workflow) and `agents` (public
+`/agents` definitions + HTTP surface) were originally two workspace
+members. They were merged into one `agent` module once the split stopped
+earning its keep: `agents` had already become the app's only real agent
+surface (nothing used a bare, unscoped `AgentService` any more - the
+lifespan singleton that used to exist was dead weight, compiling a full
+LangGraph workflow at every startup that no route ever read), and the
+two-module boundary was actively encouraging the exact anti-pattern
+`architecture.md` warns against elsewhere: `agents` importing `agent`'s,
+`rag`'s, and `tool`'s concrete classes directly instead of through ports it
+owned. One module removes both problems at once - what used to be a
+cross-module port violation is now just an ordinary same-package import.
 
 ## Development Rules
 
@@ -58,15 +100,14 @@ only a local-development scope and must not be treated as authorization.
 - Do not introduce a new abstraction (interface, base class, factory) for a
   single implementation "in case we need it later." Add it when the second
   concrete case actually shows up.
-- Keep modules isolated: `modules/agent`, `modules/rag`, and `modules/tool` do
-  not import each other's internals — only their public interfaces, and only
-  when the dependency direction below allows it. This is now a literal file
-  boundary too: `agent`/`rag`'s `src/<name>/` root holds only its public
-  entry point (`service.py`) plus `api/` if it has one; everything else
-  lives under `internal/`, which nothing outside the module ever imports
-  from. `tool` is the deliberate exception - it has no `internal/`; see
-  [architecture.md](.claude/rules/architecture.md#module-internal-layout)
-  for why.
+- Keep modules isolated: `modules/agent`, `modules/rag`, and `modules/tool`
+  do not import each other's concrete classes — only the `Protocol` ports
+  each owns in its own `ports.py`, and only when the dependency direction
+  below allows it. All three modules are flat: everything lives at
+  `src/<name>/` root, no `internal/` subpackage - a module's file layout
+  isn't a hiding place, the discipline is "depend on the port, not the
+  concrete class" enforced by review, not by a directory. See
+  [architecture.md](.claude/rules/architecture.md#module-internal-layout).
 - New dependencies on **infrastructure resources** (databases, caches,
   vector stores, hosted LLM APIs) go through `infrastructure/`, never used
   ad hoc inside a module. This doesn't apply to a module's own core

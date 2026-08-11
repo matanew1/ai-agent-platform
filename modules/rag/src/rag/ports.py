@@ -22,11 +22,11 @@ class Embedder(Protocol):
 class LLMProvider(Protocol):
     """Generates text completions - used here to rerank retrieved chunks.
 
-    A narrow duplicate of ``agent.internal.ports.LLMProvider``'s
-    ``generate`` shape (``rag`` can't import ``agent``'s internal port -
-    see ``.claude/rules/architecture.md``'s "Module-internal layout").
+    A narrow duplicate of ``agent.ports.LLMProvider``'s ``generate`` shape -
+    ``rag`` depends on a port it owns, not on ``agent``'s (see
+    ``.claude/rules/architecture.md`` on modules owning their own ports).
     ``infrastructure.llm.OllamaProvider``/``MistralProvider`` - the same
-    instance built once in ``app/lifespan.py`` for ``AgentService`` -
+    instance built once in ``app/lifespan.py`` for the agent module -
     structurally satisfy this too, without changing shape or adding a
     method: only ``generate`` is needed here, so only ``generate`` is
     declared (``generate_stream`` is agent's alone to need).
@@ -73,6 +73,14 @@ class VectorStore(Protocol):
             chunks: Chunks to store.
             embeddings: Embedding vectors, aligned by index with ``chunks``.
         """
+        ...
+
+    async def list_chunks(self, metadata_filter: dict[str, str]) -> list[Chunk]:
+        """List every stored chunk matching exact metadata values."""
+        ...
+
+    async def delete_chunks(self, metadata_filter: dict[str, str]) -> int:
+        """Delete matching chunks and return the number that existed."""
         ...
 
     async def ensure_collection(self, vector_size: int) -> None:

@@ -28,15 +28,15 @@ no decorators or import-time side effects either side:
 
 `modules/agent` never knows a tool's implementation - it only sees tools
 through the `ToolRegistry` protocol it owns
-(`agent.internal.ports.ToolRegistry`), which `tool.registry.ToolRegistry`
+(`agent.ports.ToolRegistry`), which `tool.registry.ToolRegistry`
 satisfies. The two share a name on purpose (concrete implementation named
 after the port it implements) and are distinguished by module path, not
-name - `agent.internal.ports.ToolRegistry` is the `Protocol`,
+name - `agent.ports.ToolRegistry` is the `Protocol`,
 `tool.registry.ToolRegistry` is what actually gets constructed, once, in
 `app/lifespan.py`.
 
 ```
-agent -> (agent.internal.ports.ToolRegistry) -> tool.registry.ToolRegistry -> tool.tools / tool.mcp
+agent -> (agent.ports.ToolRegistry) -> tool.registry.ToolRegistry -> tool.tools / tool.mcp
 ```
 
 `tool` produces `ToolDefinition`/`ToolResult` shapes mirroring the Model
@@ -68,7 +68,7 @@ renamed to `tool` (see `tool/__init__.py`'s docstring on why: `import mcp`
 - `ToolRegistry.call_tool` never raises for an unknown tool name or a
   failing handler - both come back as `ToolResult(is_error=True,
   content=...)`. This is deliberate: the caller is typically an LLM's
-  freeform tool choice (see `agent.internal.graph.execute_tools`), not a
+  freeform tool choice (see `agent.graph.execute_tools`), not a
   hardcoded call, so "the LLM asked for a tool that doesn't exist" or "the
   tool ran but failed" are expected, recoverable outcomes, not exceptions
   to catch everywhere. `tool/mcp/adapter.py`'s handler follows the same
@@ -212,7 +212,7 @@ no schema-level `default` - only a prose instruction in the parameter's own
 provided by the user"). A bare "what is the current time?", with no
 timezone anywhere in the message, reliably (0/4, repeated) gets `[]` -
 `qwen3:8b` declines the tool rather than reasoning its way to that
-described default under `TOOL_CALL_PROMPT_TEMPLATE`'s constraints
+described default under the general `TOOL_CALL_PROMPT_TEMPLATE` constraints
 (`_TOOL_CALL_MAX_TOKENS=200`, `reasoning=False`, "respond with ONLY a JSON
 array" - all three deliberate, for decision latency). Give the model
 either a timezone (`"...current time in Tokyo?"`) or an explicit nudge
@@ -227,8 +227,10 @@ model to use a schema-described default rather than skip the tool for a
 missing argument. Measured against the same phrasing sweep, it left the
 bare-phrasing case at 0/4 and dragged the reliable
 `"...use your time tool"` phrasing down to 2/4 - a regression with no
-offsetting gain, so nothing shipped. `TOOL_CALL_PROMPT_TEMPLATE` is
-unchanged. This is the same shape of finding as sqlite below: a
+offsetting gain, so the general selector retains those constraints. File
+generation intentionally does not use that small JSON route: it composes the
+body from retrieved context in an uncapped call, then invokes the controlled
+artifact renderer directly. This is the same shape of finding as sqlite below: a
 capability that's reachable at the protocol level but not reliably
 *selected*, better measured and documented than chased with prompt
 tweaks that regress a working case.

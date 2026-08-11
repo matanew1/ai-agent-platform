@@ -1,4 +1,4 @@
-"""Local tool: extract plain text from a Markdown file."""
+"""Local tools for extracting, generating, and editing Markdown files."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import logging
 import re
 from pathlib import Path
 
+from shared.artifacts import resolve_artifact_source, store_artifact_text
 from shared.types import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,68 @@ DEFINITION = ToolDefinition(
             "path": {"type": "string", "description": "Path to the Markdown file."},
         },
         "required": ["path"],
+    },
+)
+
+GENERATE_DEFINITION = ToolDefinition(
+    name="generate_markdown",
+    description=(
+        "Create a downloadable Markdown artifact containing the supplied content. Use this when "
+        "the user asks to generate, create, export, or download a Markdown file. Returns its "
+        "filename and download URL."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Optional output filename only, such as notes.md; directory components are "
+                    "discarded. Defaults to document.md."
+                ),
+            },
+            "content": {"type": "string", "description": "Markdown content to write."},
+        },
+        "required": ["content"],
+    },
+)
+
+EDIT_DEFINITION = ToolDefinition(
+    name="edit_markdown",
+    description=(
+        "Create a downloadable edited copy of a Markdown file by appending content or replacing "
+        "all content. The source may be an /artifacts/<filename> download URL, artifact filename, "
+        "or readable absolute Markdown path and is never modified. Use operation 'append' or "
+        "'replace'. Returns the new filename, download URL, and operation."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": (
+                    "Existing Markdown as an /artifacts/<filename> URL, safe artifact filename, "
+                    "or readable absolute .md path."
+                ),
+            },
+            "content": {
+                "type": "string",
+                "description": "Markdown content to append or use as replacement.",
+            },
+            "operation": {
+                "type": "string",
+                "enum": ["append", "replace"],
+                "description": "Edit mode.",
+            },
+            "output_path": {
+                "type": "string",
+                "description": (
+                    "Optional output filename only. Defaults to <source>-edited.md; directory "
+                    "components are discarded."
+                ),
+            },
+        },
+        "required": ["path", "content", "operation"],
     },
 )
 
@@ -69,3 +132,53 @@ async def extract_markdown(path: str) -> dict[str, str]:
     text = _strip_markdown(raw)
     logger.debug("extract_markdown: path=%r extracted %d chars", path, len(text))
     return {"text": text}
+
+
+async def generate_markdown(content: str, path: str | None = None) -> dict[str, str]:
+    """Generate downloadable Markdown in the configured artifact directory."""
+    logger.debug("generate_markdown: requested_filename=%r content_len=%d", path, len(content))
+    artifact = await asyncio.to_thread(
+        store_artifact_text,
+        content,
+        requested_filename=path,
+        default_stem="document",
+        extension=".md",
+    )
+    return {"filename": artifact.filename, "download_url": artifact.download_url}
+
+
+async def edit_markdown(
+    path: str,
+    content: str,
+    operation: str,
+    output_path: str | None = None,
+) -> dict[str, str]:
+    """Append or replace content and store a downloadable copy."""
+    if operation not in {"append", "replace"}:
+        raise ValueError("operation must be either 'append' or 'replace'.")
+    logger.debug(
+        "edit_markdown: path=%r output_path=%r operation=%r content_len=%d",
+        path,
+        output_path,
+        operation,
+        len(content),
+    )
+    source = await asyncio.to_thread(resolve_artifact_source, path, extension=".md")
+    if operation == "append":
+        existing = await asyncio.to_thread(source.read_text, encoding="utf-8")
+        separator = "" if not existing or existing.endswith("\n") else "\n"
+        edited_content = f"{existing}{separator}{content}"
+    else:
+        edited_content = content
+    artifact = await asyncio.to_thread(
+        store_artifact_text,
+        edited_content,
+        requested_filename=output_path,
+        default_stem=f"{source.stem}-edited",
+        extension=".md",
+    )
+    return {
+        "filename": artifact.filename,
+        "download_url": artifact.download_url,
+        "operation": operation,
+    }

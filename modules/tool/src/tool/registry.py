@@ -34,12 +34,12 @@ class RegisteredTool:
 
 
 class ToolRegistry:
-    """Registry that satisfies the agent's ``agent.internal.ports.ToolRegistry`` port.
+    """Registry that satisfies the agent's ``agent.ports.ToolRegistry`` port.
 
     Holds local and external MCP tools, keyed by name. Named the
     same as the port it implements - the two are distinguished by module
     path, not name: this is the concrete implementation,
-    ``agent.internal.ports.ToolRegistry`` is the ``Protocol`` it
+    ``agent.ports.ToolRegistry`` is the ``Protocol`` it
     structurally satisfies.
     """
 
@@ -110,7 +110,7 @@ class ToolRegistry:
 
         Never raises: an unknown name or a failing handler both come back
         as ``ToolResult(is_error=True, ...)`` rather than an exception, per
-        ``agent.internal.ports.ToolRegistry.call_tool``'s contract - the caller is
+        ``agent.ports.ToolRegistry.call_tool``'s contract - the caller is
         typically an LLM's freeform tool choice, not a hardcoded call.
 
         Args:

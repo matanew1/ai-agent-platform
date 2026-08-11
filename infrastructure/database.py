@@ -124,6 +124,46 @@ class MongoDatabase:
             raise DatabaseError(f"Failed to update document in {collection!r}: {exc}") from exc
         return result.matched_count > 0
 
+    async def replace_one(
+        self,
+        collection: str,
+        query: dict[str, Any],
+        document: dict[str, Any],
+        *,
+        upsert: bool = False,
+    ) -> bool:
+        """Replace one document, optionally inserting it when absent.
+
+        Session checkpoints use replacement instead of a partial update so
+        the serialized history and its timestamp always describe one
+        coherent turn.
+        """
+        logger.debug("replace_one: collection=%r query_keys=%s", collection, list(query.keys()))
+        try:
+            result = await self._db[collection].replace_one(query, document, upsert=upsert)
+        except Exception as exc:
+            raise DatabaseError(f"Failed to replace document in {collection!r}: {exc}") from exc
+        return result.matched_count > 0 or result.upserted_id is not None
+
+    async def create_index(
+        self,
+        collection: str,
+        keys: str | list[tuple[str, int]],
+        *,
+        unique: bool = False,
+        name: str | None = None,
+    ) -> str:
+        """Create (or reuse) an index needed by an infrastructure adapter."""
+        logger.debug("create_index: collection=%r name=%r", collection, name)
+        try:
+            return await self._db[collection].create_index(
+                keys,
+                unique=unique,
+                name=name,
+            )
+        except Exception as exc:
+            raise DatabaseError(f"Failed to create index on {collection!r}: {exc}") from exc
+
     async def find_many(self, collection: str, query: dict[str, Any]) -> list[dict[str, Any]]:
         """Fetch every document matching a filter.
 

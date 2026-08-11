@@ -1,12 +1,13 @@
-"""Everything the agent's LangGraph workflow needs: state, error type,
-and the graph itself.
+"""The LangGraph workflow: state, error type, and the graph itself.
 
-    START -> retrieve_context ---\\
-          -> execute_tools    ---+--> generate_answer -> END
+    START -> retrieve_context -> execute_tools -> END
 
-``retrieve_context`` and ``execute_tools`` only depend on the user's raw
-input, not on each other, so they run as parallel branches - LangGraph
-runs both in the same step and waits for both before ``generate_answer``.
+Tool execution deliberately follows retrieval. Generation tools need the
+retrieved material and conversation history to create the requested artifact;
+running those branches in parallel left the tool chooser staring only at raw
+requests such as "generate a PDF about him" with no way to resolve either the
+pronoun or the document body. ``AgentService`` uses the completed state to
+render the final-answer prompt and stream it.
 A prior version routed through a per-step ``supervisor`` LLM call before
 every node; it was removed because the routing was always deterministic
 (there's no branching logic that actually skips a step yet) and it more
@@ -22,8 +23,8 @@ heuristic (``_is_smalltalk``, ``_mentions_a_tool``) to skip their LLM/
 retrieval work outright when it's clearly not needed, instead of a
 dedicated planning step deciding that for them.
 
-Prompt templates live in ``agent.internal.prompts``. `agent.internal.ports`
-stays separate as the module's dependency contract.
+Prompt templates live in ``agent.prompts``; ports (the module's dependency
+contract) live in ``agent.ports``.
 """
 
 from __future__ import annotations
@@ -35,22 +36,24 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, Field
 
-from agent.internal.ports import LLMProvider, Retriever, ToolRegistry
-from agent.internal.prompts import (
-    GENERATE_ANSWER_PROMPT_TEMPLATE,
+from agent.ports import LLMProvider, Retriever, ToolRegistry
+from agent.prompts import (
+    GENERATE_ARTIFACT_CONTENT_PROMPT_TEMPLATE,
     SYSTEM_PROMPT,
     TOOL_CALL_PROMPT_TEMPLATE,
 )
 from shared.prompt_formatters import (
+    format_attachments,
     format_context,
     format_history,
-    format_tool_results,
     format_tools,
 )
 from shared.tool_calls import parse_tool_calls
 from shared.types import ChatMessage, Chunk, PlatformError, ToolDefinition, ToolResult
 
 logger = logging.getLogger(__name__)
+
+# --- Decision-call tuning ----------------------------------------------------
 
 # Decision-only calls (a JSON tool-call array) never need more than a few
 # dozen tokens - capping them cuts generation time without touching answer
@@ -97,6 +100,9 @@ _SMALLTALK_MESSAGES = {
 }
 
 
+# --- Errors + state ----------------------------------------------------------
+
+
 class AgentError(PlatformError):
     """The only exception the agent module raises.
 
@@ -118,6 +124,7 @@ class AgentState(BaseModel):
         session_id: Conversation/session identifier.
         input: The user's latest message.
         history: Prior turns in this conversation, oldest first.
+        attachments: Extracted files attached to this turn.
         allowed_tools: Tool names execute_tools may consider this turn.
             Empty (the default) means every registered tool is available -
             see ``_execute_tools``. A name not in the registry just means
@@ -125,16 +132,18 @@ class AgentState(BaseModel):
             ``ToolRegistry.call_tool`` - not an error.
         context: Chunks retrieved by the retrieve_context node.
         tool_results: Results from tools run by the execute_tools node.
-        answer: Final answer produced by generate_answer, once set.
     """
 
     session_id: str
     input: str
     history: list[ChatMessage] = Field(default_factory=list)
+    attachments: list[tuple[str, str]] = Field(default_factory=list)
     allowed_tools: list[str] | None = None
     context: list[Chunk] = Field(default_factory=list)
     tool_results: list[ToolResult] = Field(default_factory=list)
-    answer: str | None = None
+
+
+# --- Heuristics ---------------------------------------------------------------
 
 
 def _mentions_a_tool(input_text: str, tools: list[ToolDefinition]) -> bool:
@@ -178,7 +187,39 @@ def _is_smalltalk(input_text: str) -> bool:
     return normalized in _SMALLTALK_MESSAGES
 
 
-# --- Graph -----------------------------------------------------------------
+def _requested_artifact(input_text: str) -> tuple[str, str, str] | None:
+    """Return ``(tool_name, content_argument, format)`` for explicit file creation.
+
+    This narrow deterministic branch handles operations whose complete
+    document body cannot fit inside the small JSON tool-selection budget.
+    Every non-generation tool still goes through the model's normal selector.
+    """
+    lowered = input_text.lower()
+    asks_to_create = any(
+        verb in lowered
+        for verb in (
+            "create",
+            "generate",
+            "genereate",
+            "genrate",
+            "make",
+            "write",
+            "build",
+            "produce",
+            "export",
+            "download",
+        )
+    )
+    if not asks_to_create:
+        return None
+    if "pdf" in lowered or ".pdf" in lowered:
+        return ("generate_pdf", "text", "plain-text PDF")
+    if "markdown" in lowered or ".md" in lowered:
+        return ("generate_markdown", "content", "Markdown")
+    return None
+
+
+# --- Graph ---------------------------------------------------------------------
 
 
 class AgentGraph:
@@ -211,10 +252,51 @@ class AgentGraph:
     async def _execute_tools(self, state: AgentState) -> dict[str, Any]:
         """Ask the LLM which tools, if any, would help, then run them."""
         tools = self._tool_registry.get_tools()
+        registered_names = {tool.name for tool in tools}
+        artifact_request = _requested_artifact(state.input)
+        if artifact_request and artifact_request[0] not in registered_names:
+            raise AgentError(f"Requested artifact tool {artifact_request[0]!r} is not registered.")
         if state.allowed_tools:
             allowed = set(state.allowed_tools)
             tools = [tool for tool in tools if tool.name in allowed]
-        if not tools or not _mentions_a_tool(state.input, tools):
+            if artifact_request and artifact_request[0] not in allowed:
+                raise AgentError(
+                    f"Tool {artifact_request[0]!r} is disabled for this agent. "
+                    "Enable it under Allowed tools and try again."
+                )
+        if not tools:
+            logger.debug(
+                "[execute_tools] session_id=%r skipped (no tools allowed)", state.session_id
+            )
+            return {"tool_results": []}
+
+        allowed_names = {tool.name for tool in tools}
+        if artifact_request and artifact_request[0] in allowed_names:
+            tool_name, content_argument, artifact_format = artifact_request
+            content_prompt = GENERATE_ARTIFACT_CONTENT_PROMPT_TEMPLATE.format(
+                system_prompt=self._system_prompt,
+                history=format_history(state.history),
+                input=state.input,
+                attachments=format_attachments(state.attachments),
+                context=format_context(state.context),
+                artifact_format=artifact_format,
+            )
+            try:
+                # Artifact bodies can be much larger than a compact JSON
+                # routing decision, so leave this generation uncapped and
+                # pass the finished body directly to the renderer.
+                content = await self._llm.generate(content_prompt)
+            except Exception as exc:
+                raise AgentError(f"Failed to compose the requested artifact: {exc}") from exc
+            result = await self._tool_registry.call_tool(
+                tool_name,
+                {content_argument: content},
+            )
+            return {"tool_results": [result]}
+
+        recent_history = "\n".join(message.content for message in state.history[-2:])
+        mention_text = f"{recent_history}\n{state.input}" if recent_history else state.input
+        if not _mentions_a_tool(mention_text, tools):
             logger.debug(
                 "[execute_tools] session_id=%r skipped (no tool mentioned or none allowed)",
                 state.session_id,
@@ -223,7 +305,10 @@ class AgentGraph:
 
         prompt = TOOL_CALL_PROMPT_TEMPLATE.format(
             system_prompt=self._system_prompt,
+            history=format_history(state.history),
             input=state.input,
+            attachments=format_attachments(state.attachments),
+            context=format_context(state.context),
             tools=format_tools(tools),
         )
         try:
@@ -239,7 +324,6 @@ class AgentGraph:
         # for anything outside it is dropped here, not just kept out of the
         # prompt - a hallucinated name that happens to exist elsewhere in
         # the registry must not slip through just because the LLM guessed it.
-        allowed_names = {tool.name for tool in tools}
         results = [
             await self._tool_registry.call_tool(call["name"], call.get("arguments") or {})
             for call in calls
@@ -247,51 +331,16 @@ class AgentGraph:
         ]
         return {"tool_results": results}
 
-    async def _generate_answer(self, state: AgentState) -> dict[str, Any]:
-        """Produce the final answer from context and tool results."""
-        prompt = GENERATE_ANSWER_PROMPT_TEMPLATE.format(
-            system_prompt=self._system_prompt,
-            history=format_history(state.history),
-            input=state.input,
-            context=format_context(state.context),
-            tool_results=format_tool_results(state.tool_results),
-        )
-        try:
-            answer = await self._llm.generate(prompt)
-        except Exception as exc:
-            raise AgentError(f"Failed to generate an answer: {exc}") from exc
-        return {"answer": answer}
-
-    def _build_graph(self, *, include_answer: bool) -> StateGraph:
+    def _build_graph(self) -> StateGraph:
         graph: StateGraph = StateGraph(AgentState)
         graph.add_node("retrieve_context", self._retrieve_context)
         graph.add_node("execute_tools", self._execute_tools)
         graph.add_edge(START, "retrieve_context")
-        graph.add_edge(START, "execute_tools")
-
-        if include_answer:
-            graph.add_node("generate_answer", self._generate_answer)
-            graph.add_edge("retrieve_context", "generate_answer")
-            graph.add_edge("execute_tools", "generate_answer")
-            graph.add_edge("generate_answer", END)
-        else:
-            graph.add_edge("retrieve_context", END)
-            graph.add_edge("execute_tools", END)
+        graph.add_edge("retrieve_context", "execute_tools")
+        graph.add_edge("execute_tools", END)
 
         return graph
 
-    def compile(self) -> CompiledStateGraph:
-        """Compile the full workflow, ending in ``generate_answer``."""
-        return self._build_graph(include_answer=True).compile()
-
     def compile_prefix(self) -> CompiledStateGraph:
-        """Compile everything up to (not including) ``generate_answer``.
-
-        Used by ``AgentService.run_stream`` to get ``context``/
-        ``tool_results`` filled in, then render the same
-        ``GENERATE_ANSWER_PROMPT_TEMPLATE`` and call the LLM itself in
-        streaming mode - the final answer is the only piece of node logic
-        with a legitimate second caller, so it isn't just another graph
-        node.
-        """
-        return self._build_graph(include_answer=False).compile()
+        """Compile the retrieval and tool-execution preparation graph."""
+        return self._build_graph().compile()

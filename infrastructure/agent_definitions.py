@@ -37,9 +37,7 @@ class MongoAgentDefinitionRepository:
 
     async def save(self, definition: AgentDefinition) -> bool:
         """Update a definition, matching both its id and owner."""
-        update_fields = definition.model_dump(
-            mode="json", exclude={"id", "owner_id", "created_at"}
-        )
+        update_fields = definition.model_dump(mode="json", exclude={"id", "owner_id", "created_at"})
         return await self._database.update_one(
             _COLLECTION,
             {"id": definition.id, "owner_id": definition.owner_id},
