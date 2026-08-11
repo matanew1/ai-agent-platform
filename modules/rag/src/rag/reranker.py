@@ -14,8 +14,8 @@ from __future__ import annotations
 import json
 import logging
 
-from rag.internal.ports import LLMProvider
-from rag.internal.prompts import RERANK_PROMPT_TEMPLATE
+from rag.ports import LLMProvider
+from rag.prompts import RERANK_PROMPT_TEMPLATE
 from shared.types import Chunk
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # array a flat 100-token cap would truncate before the closing bracket -
 # see _parse_ranking's bracket check, and the regression test for exactly
 # this. Kept as tight as the candidate count allows for the same reason
-# agent.internal.graph._TOOL_CALL_MAX_TOKENS is: a decision-only call
+# agent.graph._TOOL_CALL_MAX_TOKENS is: a decision-only call
 # doesn't need room for prose, and a smaller cap means a faster response.
 _RERANK_BASE_TOKENS = 20
 _RERANK_TOKENS_PER_CANDIDATE = 6

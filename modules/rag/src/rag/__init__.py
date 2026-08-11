@@ -1,7 +1,7 @@
 """Retrieval-augmented generation module.
 
 Owns chunking, ingestion, and retrieval. Depends only on the
-``VectorStore`` port in ``rag.internal.ports`` - never on Qdrant directly. See
+``VectorStore`` port in ``rag.ports`` - never on Qdrant directly. See
 ``.claude/rules/architecture.md``.
 """
 

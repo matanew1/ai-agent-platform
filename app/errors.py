@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from agent.internal.graph import AgentError
+from agent.graph import AgentError
 from fastapi import Request
 from fastapi.responses import JSONResponse
 

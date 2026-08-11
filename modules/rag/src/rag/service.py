@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from rag.internal.ports import Embedder, LLMProvider, VectorStore
-from rag.internal.reranker import rerank_chunks
+from rag.ports import Embedder, LLMProvider, VectorStore
+from rag.reranker import rerank_chunks
 from shared.text import chunk_text
-from shared.types import Chunk
+from shared.types import Chunk, IndexedDocument
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,11 @@ class RAGService:
 
     Args:
         vector_store: Vector store implementation (see
-            ``rag.internal.ports.VectorStore``).
+            ``rag.ports.VectorStore``).
         embedder: Turns text into vectors for indexing and querying.
         llm: Optional - when set, ``search`` reranks a wider vector-search
             candidate set with it before returning ``top_k`` (see
-            ``rag.internal.reranker.rerank_chunks``). ``None`` (the
+            ``rag.reranker.rerank_chunks``). ``None`` (the
             default) skips reranking entirely: ``search`` costs exactly
             one embedding call, same as before this existed.
     """
@@ -91,7 +91,7 @@ class RAGService:
                 configured ``llm`` before returning ``top_k`` of them - a
                 per-call opt-out for when plain vector-search speed matters
                 more than the accuracy reranking adds (see
-                ``rag.internal.reranker`` for the measured trade-off).
+                ``rag.reranker`` for the measured trade-off).
                 Ignored (no-ops to plain vector search) when no ``llm`` was
                 configured in the first place - this never raises just
                 because reranking isn't available to turn on.
@@ -112,12 +112,27 @@ class RAGService:
         candidates = await self._search_vectors(embedding, candidate_k, metadata_filter)
         return await rerank_chunks(self._llm, query, candidates, top_k)
 
+    async def list_documents(self, metadata_filter: dict[str, str]) -> list[IndexedDocument]:
+        """Aggregate stored chunks into one record per source document."""
+        chunks = await self._vector_store.list_chunks(metadata_filter)
+        counts: dict[str, int] = {}
+        for chunk in chunks:
+            source_id = chunk.metadata.get("source_id")
+            if source_id:
+                counts[source_id] = counts.get(source_id, 0) + 1
+        return [
+            IndexedDocument(source_id=source_id, chunks_indexed=count)
+            for source_id, count in sorted(counts.items())
+        ]
+
+    async def delete_document(self, metadata_filter: dict[str, str]) -> bool:
+        """Delete one exact document selection from the vector store."""
+        return await self._vector_store.delete_chunks(metadata_filter) > 0
+
     async def _search_vectors(
         self, embedding: list[float], top_k: int, metadata_filter: dict[str, str] | None
     ) -> list[Chunk]:
         """Call the vector store with a metadata filter only when needed."""
         if metadata_filter is None:
             return await self._vector_store.search(embedding, top_k)
-        return await self._vector_store.search(
-            embedding, top_k, metadata_filter=metadata_filter
-        )
+        return await self._vector_store.search(embedding, top_k, metadata_filter=metadata_filter)

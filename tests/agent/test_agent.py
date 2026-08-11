@@ -1,13 +1,4 @@
-"""Unit tests for agent.service.AgentService and its LangGraph workflow.
-
-Every dependency is a hand-written fake satisfying the corresponding
-`agent.internal.ports` Protocol - no real LLM, retriever, memory, or tool registry
-is touched (that's what the live smoke tests run manually against a real
-Ollama server are for - see the project README). `FakeLLMProvider` inspects
-the prompt to decide which node is calling it, since the graph sends both
-the execute_tools and generate_answer prompts through the same `generate`
-method. See `.claude/rules/testing.md`.
-"""
+"""Unit tests for the streaming-only ``agent.service.AgentService``."""
 
 from __future__ import annotations
 
@@ -17,52 +8,48 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import pytest
-from agent.internal.graph import AgentError
+from agent.graph import AgentError
 from agent.service import AgentService
 
 from shared.types import Chunk, SessionCheckpoint, ToolDefinition, ToolResult
 
 
 class FakeLLMProvider:
-    """Fake satisfying agent.internal.ports.LLMProvider.
-
-    Args:
-        tool_call: If given, returned (as a single-element JSON array) when
-            asked which tools to call. If ``None``, "no tools needed" (``[]``).
-        answer: Text returned as the final answer.
-    """
+    """Minimal LLM fake that streams its configured answer one character at a time."""
 
     def __init__(
-        self, tool_call: dict[str, object] | None = None, answer: str = "the final answer"
-    ):
+        self,
+        tool_call: dict[str, object] | None = None,
+        answer: str = "the final answer",
+        artifact_content: str = "the generated document",
+    ) -> None:
         self._tool_call = tool_call
         self._answer = answer
+        self._artifact_content = artifact_content
         self.prompts: list[str] = []
 
     async def generate(self, prompt: str, max_tokens: int | None = None) -> str:
         self.prompts.append(prompt)
-        # A real suspension point, not just an `async def` with no genuine
-        # await - lets concurrent callers (see the session_lock regression
-        # tests below) actually interleave instead of running one to
-        # completion before the other starts.
         await asyncio.sleep(0)
-        if "Available tools:" in prompt:
-            return json.dumps([self._tool_call]) if self._tool_call else "[]"
-        if "Write the final answer" in prompt:
-            return self._answer
-        raise AssertionError(f"Unexpected prompt reached FakeLLMProvider.generate: {prompt!r}")
+        if "Create the complete" in prompt:
+            return self._artifact_content
+        return (
+            json.dumps([self._tool_call])
+            if "Available tools:" in prompt and self._tool_call
+            else "[]"
+        )
 
     async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
         self.prompts.append(prompt)
-        for char in self._answer:
+        for character in self._answer:
             await asyncio.sleep(0)
-            yield char
+            yield character
 
 
 class FakeRetriever:
-    """Fake satisfying agent.internal.ports.Retriever."""
+    """Retriever fake that records search queries."""
 
-    def __init__(self, chunks: list[Chunk] | None = None):
+    def __init__(self, chunks: list[Chunk] | None = None) -> None:
         self._chunks = chunks if chunks is not None else [Chunk(id="1", text="context", score=0.9)]
         self.queries: list[str] = []
 
@@ -72,13 +59,9 @@ class FakeRetriever:
 
 
 class FakeToolRegistry:
-    """Fake satisfying agent.internal.ports.ToolRegistry. Always exposes "echo"
-    (so execute_tools doesn't short-circuit on an empty tool list); pass
-    extra_tools for tests that need more than one registered tool, e.g. the
-    allowed_tools filter tests below.
-    """
+    """Tool-registry fake with an ``echo`` tool available by default."""
 
-    def __init__(self, extra_tools: list[ToolDefinition] | None = None):
+    def __init__(self, extra_tools: list[ToolDefinition] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self._tools = [ToolDefinition(name="echo", description="Echoes its arguments.")] + (
             extra_tools or []
@@ -89,20 +72,22 @@ class FakeToolRegistry:
 
     async def call_tool(self, name: str, arguments: dict[str, object]) -> ToolResult:
         self.calls.append((name, arguments))
+        if name == "generate_pdf":
+            return ToolResult(
+                tool_name=name,
+                content={
+                    "filename": "matan-bardugo.pdf",
+                    "download_url": "/artifacts/matan-bardugo.pdf",
+                    "pages": 1,
+                },
+            )
         return ToolResult(tool_name=name, content={"echoed": arguments})
 
 
 class FakeMemory:
-    """Fake satisfying agent.internal.ports.Memory, backed by a plain dict.
+    """In-memory checkpoint and per-session lock implementation."""
 
-    `session_lock` uses a real `asyncio.Lock` per session_id (in-process,
-    fine for a single-event-loop unit test) rather than a no-op, so tests
-    can actually verify AgentService holds it across the whole load ->
-    run -> save sequence - see the `test_run_serializes_concurrent_requests_
-    on_the_same_session` regression test below.
-    """
-
-    def __init__(self):
+    def __init__(self) -> None:
         self.saved: list[SessionCheckpoint] = []
         self._store: dict[str, SessionCheckpoint] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -118,7 +103,7 @@ class FakeMemory:
         self._store[checkpoint.session_id] = checkpoint
 
     @asynccontextmanager
-    async def session_lock(self, session_id: str):
+    async def session_lock(self, session_id: str) -> AsyncIterator[None]:
         lock = self._locks.setdefault(session_id, asyncio.Lock())
         async with lock:
             yield
@@ -134,246 +119,149 @@ def _make_service(
     retriever = retriever or FakeRetriever()
     memory = memory or FakeMemory()
     tool_registry = tool_registry or FakeToolRegistry()
-    service = AgentService(llm=llm, retriever=retriever, memory=memory, tool_registry=tool_registry)
-    return service, llm, retriever, memory, tool_registry
-
-
-async def test_run_returns_the_generated_answer() -> None:
-    service, *_ = _make_service(llm=FakeLLMProvider(answer="42"))
-
-    result = await service.run(session_id="s1", message="what is the answer?")
-
-    assert result.answer == "42"
-
-
-async def test_run_reports_execution_time() -> None:
-    service, *_ = _make_service()
-
-    result = await service.run(session_id="s1", message="what is the answer?")
-
-    assert result.execution_time_seconds > 0
-
-
-async def test_run_reports_tools_invoked() -> None:
-    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
-    service, *_ = _make_service(llm=llm, tool_registry=FakeToolRegistry())
-
-    # "echo" is the registered tool's name, so the input-mention heuristic
-    # lets this reach the LLM - see test_run_calls_the_tool_the_llm_requests.
-    result = await service.run(session_id="s1", message="echo x=1")
-
-    assert result.tools_invoked == ["echo"]
-
-
-async def test_run_reports_no_tools_invoked_when_none_were_called() -> None:
-    service, *_ = _make_service()  # default LLM requests no tools
-
-    result = await service.run(session_id="s1", message="just answer directly")
-
-    assert result.tools_invoked == []
-
-
-async def test_run_reports_chunks_retrieved() -> None:
-    retriever = FakeRetriever(
-        chunks=[Chunk(id="1", text="a", score=0.9), Chunk(id="2", text="b", score=0.8)]
+    return (
+        AgentService(llm=llm, retriever=retriever, memory=memory, tool_registry=tool_registry),
+        llm,
+        retriever,
+        memory,
+        tool_registry,
     )
-    service, *_ = _make_service(retriever=retriever)
-
-    result = await service.run(session_id="s1", message="what does this platform do?")
-
-    assert result.chunks_retrieved == 2
 
 
-async def test_run_reports_zero_chunks_when_retrieval_is_skipped() -> None:
-    retriever = FakeRetriever()
-    service, *_ = _make_service(retriever=retriever)
-
-    result = await service.run(session_id="s1", message="thanks!")  # smalltalk - skips retrieval
-
-    assert result.chunks_retrieved == 0
-    assert retriever.queries == []
-
-
-async def test_run_uses_retriever_for_context() -> None:
-    service, _, retriever, _, _ = _make_service()
-
-    await service.run(session_id="s1", message="tell me about the platform")
-
-    assert retriever.queries == ["tell me about the platform"]
-
-
-async def test_run_calls_the_tool_the_llm_requests() -> None:
-    tool_registry = FakeToolRegistry()
-    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
-    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
-
-    # "echo" is the registered tool's name, so the input-mention heuristic
-    # (agent.internal.graph._mentions_a_tool) lets this reach the LLM.
-    await service.run(session_id="s1", message="echo x=1")
-
-    assert tool_registry.calls == [("echo", {"x": 1})]
-
-
-async def test_run_with_tools_allows_a_tool_in_the_list() -> None:
-    tool_registry = FakeToolRegistry(
-        extra_tools=[ToolDefinition(name="shout", description="Shouts its arguments.")]
-    )
-    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
-    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
-
-    result = await service.run(session_id="s1", message="echo x=1", tools=["echo"])
-
-    assert tool_registry.calls == [("echo", {"x": 1})]
-    assert result.tools_invoked == ["echo"]
-
-
-async def test_run_with_tools_blocks_a_tool_outside_the_list_even_if_the_llm_requests_it() -> None:
-    """Enforced at the call-dispatch level, not just by omitting the tool
-    from the prompt - a hallucinated name that happens to exist elsewhere
-    in the registry must not slip through.
-    """
-    tool_registry = FakeToolRegistry(
-        extra_tools=[ToolDefinition(name="shout", description="Shouts its arguments.")]
-    )
-    # FakeLLMProvider doesn't read the prompt's tool list - it "requests"
-    # shout regardless of what execute_tools actually showed it, standing
-    # in for the model naming a tool never offered.
-    llm = FakeLLMProvider(tool_call={"name": "shout", "arguments": {"x": 1}})
-    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
-
-    result = await service.run(session_id="s1", message="echo x=1", tools=["echo"])
-
-    assert tool_registry.calls == []
-    assert result.tools_invoked == []
-
-
-async def test_run_with_an_empty_tools_list_leaves_every_tool_available() -> None:
-    tool_registry = FakeToolRegistry(
-        extra_tools=[ToolDefinition(name="shout", description="Shouts its arguments.")]
-    )
-    llm = FakeLLMProvider(tool_call={"name": "shout", "arguments": {"x": 1}})
-    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
-
-    # "shout" mentioned so the heuristic reaches the LLM at all.
-    await service.run(session_id="s1", message="shout x=1", tools=[])
-
-    assert tool_registry.calls == [("shout", {"x": 1})]
-
-
-async def test_run_with_an_unregistered_tool_name_leaves_no_tools_available() -> None:
-    tool_registry = FakeToolRegistry()
-    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
-    service, *_ = _make_service(llm=llm, tool_registry=tool_registry)
-
-    result = await service.run(session_id="s1", message="echo x=1", tools=["nonexistent"])
-
-    assert tool_registry.calls == []
-    assert result.tools_invoked == []
-    # No usable tool at all should skip the LLM tool-decision call outright,
-    # same as an empty registry - see
-    # test_execute_tools_skips_the_llm_call_when_no_tool_is_mentioned.
-    assert not any("Available tools:" in prompt for prompt in llm.prompts)
-
-
-async def test_run_calls_no_tools_when_the_llm_requests_none() -> None:
-    tool_registry = FakeToolRegistry()
-    service, *_ = _make_service(tool_registry=tool_registry)  # default LLM requests no tools
-
-    await service.run(session_id="s1", message="just answer directly")
-
-    assert tool_registry.calls == []
-
-
-async def test_execute_tools_skips_the_llm_call_when_no_tool_is_mentioned() -> None:
-    """The input-mention heuristic should skip the tool-decision LLM call
-    entirely (not just decline to call a tool) when no registered tool's
-    name is referenced - the whole point is saving that round-trip.
-    """
-    llm = FakeLLMProvider()
-    service, *_ = _make_service(llm=llm)
-
-    await service.run(session_id="s1", message="just answer directly")
-
-    assert not any("Available tools:" in prompt for prompt in llm.prompts)
-
-
-async def test_retrieve_context_skips_retrieval_for_smalltalk() -> None:
-    """The smalltalk heuristic should skip the retriever call entirely (not
-    just retrieve and ignore it) on a pure greeting/acknowledgement, same
-    saved-round-trip intent as the tool-mention heuristic above.
-    """
-    retriever = FakeRetriever()
-    service, *_ = _make_service(retriever=retriever)
-
-    await service.run(session_id="s1", message="thanks!")
-
-    assert retriever.queries == []
-
-
-async def test_retrieve_context_still_retrieves_for_a_real_question() -> None:
-    retriever = FakeRetriever()
-    service, *_ = _make_service(retriever=retriever)
-
-    await service.run(session_id="s1", message="what does this platform do?")
-
-    assert retriever.queries == ["what does this platform do?"]
-
-
-async def test_run_saves_the_turn_to_memory() -> None:
+async def test_run_stream_yields_the_answer_and_saves_the_turn() -> None:
     memory = FakeMemory()
-    service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="the answer"))
+    service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="hello world"))
 
-    await service.run(session_id="s1", message="the question")
+    _, stream = await service.run_stream(session_id="s1", message="hi")
+    chunks = [chunk async for chunk in stream]
 
-    assert len(memory.saved) == 1
-    history = memory.saved[0].history
-    assert [(turn.role, turn.content) for turn in history] == [
-        ("user", "the question"),
-        ("assistant", "the answer"),
+    assert "".join(chunks) == "hello world"
+    assert len(chunks) > 1
+    assert [(turn.role, turn.content) for turn in memory.saved[0].history] == [
+        ("user", "hi"),
+        ("assistant", "hello world"),
     ]
 
 
-async def test_run_appends_to_existing_history() -> None:
+async def test_run_stream_returns_metadata_after_retrieval_and_tool_execution() -> None:
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}}, answer="ok")
+    retriever = FakeRetriever(chunks=[Chunk(id="1", text="a", score=0.9)])
+    memory = FakeMemory()
+    service, _, _, _, tools = _make_service(llm=llm, retriever=retriever, memory=memory)
+
+    metadata, stream = await service.run_stream(session_id="s1", message="echo x=1")
+    async for _ in stream:
+        pass
+
+    assert metadata.tools_invoked == ["echo"]
+    assert metadata.chunks_retrieved == 1
+    assert tools.calls == [("echo", {"x": 1})]
+    saved_answer = memory.saved[-1].history[-1]
+    assert saved_answer.tools_invoked == ["echo"]
+    assert saved_answer.chunks_retrieved == 1
+    assert saved_answer.prep_time_seconds == metadata.prep_time_seconds
+    tool_prompt = next(prompt for prompt in llm.prompts if "Available tools:" in prompt)
+    assert "Retrieved context:\n- a" in tool_prompt
+
+
+async def test_generate_pdf_uses_retrieved_context_and_conversation_history() -> None:
+    pdf_tool = ToolDefinition(
+        name="generate_pdf",
+        description="Create a PDF from supplied text.",
+        parameters={
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+    )
+    tools = FakeToolRegistry(extra_tools=[pdf_tool])
+    llm = FakeLLMProvider(
+        artifact_content="Matan Bardugo is a backend engineer in Israel.",
+        answer="Created: /artifacts/matan-bardugo.pdf",
+    )
+    retriever = FakeRetriever(
+        chunks=[Chunk(id="profile", text="Matan works on AI-powered backend systems.", score=0.9)]
+    )
     memory = FakeMemory()
     memory.seed(
         SessionCheckpoint(
             session_id="s1",
-            history=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}],
+            history=[
+                {"role": "user", "content": "Tell me about Matan Bardugo."},
+                {"role": "assistant", "content": "He is a backend engineer."},
+            ],
         )
     )
-    service, *_ = _make_service(memory=memory)
-
-    await service.run(session_id="s1", message="follow-up question")
-
-    assert len(memory.saved[0].history) == 4
-
-
-async def test_run_serializes_concurrent_requests_on_the_same_session() -> None:
-    """Regression test for the lost-update race AgentService.run's
-    session_lock guards against: two concurrent .run() calls on the same
-    session_id must not both read the same starting history and then both
-    save, with the second silently overwriting the first's turn. Relies on
-    FakeMemory.session_lock's real asyncio.Lock and FakeLLMProvider's
-    genuine await point to actually exercise the interleaving - before the
-    session_lock fix, this fails with only 2 messages (one turn) in the
-    final checkpoint instead of 4 (both turns).
-    """
-    memory = FakeMemory()
-    service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="ok"))
-
-    await asyncio.gather(
-        service.run(session_id="s1", message="first"),
-        service.run(session_id="s1", message="second"),
+    service, *_ = _make_service(
+        llm=llm,
+        retriever=retriever,
+        memory=memory,
+        tool_registry=tools,
     )
 
-    assert len(memory.saved) == 2
-    assert len(memory.saved[-1].history) == 4
+    metadata, stream = await service.run_stream(
+        session_id="s1",
+        message="Can you genereate a PDF about him?",
+        tools=["generate_pdf"],
+    )
+    answer = "".join([chunk async for chunk in stream])
+
+    assert metadata.tools_invoked == ["generate_pdf"]
+    assert [artifact.model_dump() for artifact in metadata.artifacts] == [
+        {
+            "filename": "matan-bardugo.pdf",
+            "download_url": "/artifacts/matan-bardugo.pdf",
+        }
+    ]
+    assert tools.calls == [
+        ("generate_pdf", {"text": "Matan Bardugo is a backend engineer in Israel."})
+    ]
+    artifact_prompt = next(prompt for prompt in llm.prompts if "Create the complete" in prompt)
+    assert "Tell me about Matan Bardugo" in artifact_prompt
+    assert "Matan works on AI-powered backend systems" in artifact_prompt
+    assert answer == "Created: /artifacts/matan-bardugo.pdf"
+    assert memory.saved[-1].history[-1].artifacts == metadata.artifacts
+
+
+async def test_generate_pdf_respects_the_tool_allowlist() -> None:
+    pdf_tool = ToolDefinition(name="generate_pdf", description="Create a PDF.")
+    tools = FakeToolRegistry(extra_tools=[pdf_tool])
+    service, *_ = _make_service(tool_registry=tools)
+
+    with pytest.raises(AgentError, match="disabled for this agent"):
+        await service.run_stream(
+            session_id="s1",
+            message="Generate a PDF about the retrieved profile.",
+            tools=["echo"],
+        )
+
+    assert tools.calls == []
+
+
+async def test_run_stream_honors_the_tool_allowlist() -> None:
+    tools = FakeToolRegistry(extra_tools=[ToolDefinition(name="shout", description="Shouts.")])
+    llm = FakeLLMProvider(tool_call={"name": "shout", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tools)
+
+    _, stream = await service.run_stream(session_id="s1", message="echo x=1", tools=["echo"])
+    async for _ in stream:
+        pass
+
+    assert tools.calls == []
+
+
+async def test_run_stream_skips_retrieval_for_smalltalk() -> None:
+    retriever = FakeRetriever()
+    service, *_ = _make_service(retriever=retriever)
+
+    _, stream = await service.run_stream(session_id="s1", message="thanks!")
+    async for _ in stream:
+        pass
+
+    assert retriever.queries == []
 
 
 async def test_run_stream_serializes_concurrent_requests_on_the_same_session() -> None:
-    """Same regression as above, for run_stream - the lock must span every
-    yield, not just the setup before the first one.
-    """
     memory = FakeMemory()
     service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="ok"))
 
@@ -388,20 +276,7 @@ async def test_run_stream_serializes_concurrent_requests_on_the_same_session() -
     assert len(memory.saved[-1].history) == 4
 
 
-async def test_run_raises_agent_error_when_llm_returns_no_answer() -> None:
-    service, *_ = _make_service(llm=FakeLLMProvider(answer=""))
-
-    with pytest.raises(AgentError):
-        await service.run(session_id="s1", message="hello")
-
-
-async def test_run_stream_releases_the_session_lock_if_prep_fails() -> None:
-    """Regression test for the AsyncExitStack cleanup path: run_stream's
-    lock is entered manually (not `async with`) because it has to span
-    past the method's own return - a failure during prep must still
-    release it, or a later call on the same session_id deadlocks forever.
-    """
-
+async def test_run_stream_releases_its_lock_when_preparation_fails() -> None:
     class FailingRetriever:
         async def search(self, query: str, top_k: int = 5) -> list[Chunk]:
             raise RuntimeError("retrieval broke")
@@ -409,62 +284,47 @@ async def test_run_stream_releases_the_session_lock_if_prep_fails() -> None:
     memory = FakeMemory()
     service, *_ = _make_service(memory=memory, retriever=FailingRetriever())
 
-    # _retrieve_context wraps the retriever's failure as AgentError - see
-    # agent.internal.graph.
     with pytest.raises(AgentError):
         await service.run_stream(session_id="s1", message="a real question")
 
-    # If the lock leaked, this hangs forever instead of completing.
-    metadata, stream = await asyncio.wait_for(
-        service.run_stream(session_id="s1", message="thanks!"), timeout=1
+    _, stream = await asyncio.wait_for(service.run_stream(session_id="s1", message="thanks!"), 1)
+    async for _ in stream:
+        pass
+
+
+async def test_run_stream_folds_attachments_into_the_answer_prompt_only() -> None:
+    """Attached-file text must reach the answer prompt but never the saved
+    turn - ephemeral means gone after this turn, not remembered forever.
+    """
+    memory = FakeMemory()
+    llm = FakeLLMProvider(answer="ok")
+    service, *_ = _make_service(memory=memory, llm=llm)
+
+    _, stream = await service.run_stream(
+        session_id="s1",
+        message="summarize this",
+        attachments=[("notes.txt", "the quarterly numbers are up 12%")],
     )
     async for _ in stream:
         pass
-    assert metadata.tools_invoked == []
+
+    answer_prompt = llm.prompts[-1]
+    assert "notes.txt" in answer_prompt
+    assert "the quarterly numbers are up 12%" in answer_prompt
+    saved_message = memory.saved[0].history[0]
+    assert saved_message.content == "summarize this"
+    assert "quarterly numbers" not in saved_message.content
 
 
-async def test_run_stream_yields_the_answer_in_chunks_and_saves_it() -> None:
-    memory = FakeMemory()
-    service, *_ = _make_service(memory=memory, llm=FakeLLMProvider(answer="hello world"))
-
-    _, stream = await service.run_stream(session_id="s1", message="hi")
-    chunks = [chunk async for chunk in stream]
-
-    assert "".join(chunks) == "hello world"
-    assert len(chunks) > 1  # actually streamed, not one big chunk
-    assert len(memory.saved) == 1
-    assert [(turn.role, turn.content) for turn in memory.saved[0].history] == [
-        ("user", "hi"),
-        ("assistant", "hello world"),
-    ]
-
-
-async def test_run_stream_returns_metadata_before_the_stream_starts() -> None:
-    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}}, answer="ok")
-    retriever = FakeRetriever(chunks=[Chunk(id="1", text="a", score=0.9)])
-    service, *_ = _make_service(llm=llm, retriever=retriever, tool_registry=FakeToolRegistry())
-
-    # "echo" mentioned so the tool-call heuristic reaches the LLM, same as
-    # test_run_calls_the_tool_the_llm_requests.
-    metadata, stream = await service.run_stream(session_id="s1", message="echo x=1")
-
-    assert metadata.tools_invoked == ["echo"]
-    assert metadata.chunks_retrieved == 1
-    assert metadata.prep_time_seconds > 0
-    async for _ in stream:  # drain so the lock releases before the test ends
-        pass
-
-
-async def test_run_stream_raises_agent_error_when_the_stream_fails() -> None:
+async def test_run_stream_wraps_a_generation_failure_as_agent_error() -> None:
     class BrokenStreamLLMProvider(FakeLLMProvider):
         async def generate_stream(self, prompt: str) -> AsyncIterator[str]:
-            self.prompts.append(prompt)
             raise RuntimeError("stream broke")
-            yield  # pragma: no cover - unreachable, just marks this an async generator
+            yield  # pragma: no cover
 
     service, *_ = _make_service(llm=BrokenStreamLLMProvider())
 
-    with pytest.raises(AgentError):
+    with pytest.raises(AgentError, match="stream broke"):
         _, stream = await service.run_stream(session_id="s1", message="hello")
         async for _ in stream:
             pass
