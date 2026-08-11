@@ -1,6 +1,6 @@
 """Unit tests for rag.service.RAGService.
 
-Uses a fake satisfying `rag.internal.ports.VectorStore` - no real Qdrant involved.
+Uses a fake satisfying `rag.ports.VectorStore` - no real Qdrant involved.
 See `.claude/rules/testing.md`.
 """
 
@@ -13,7 +13,7 @@ from shared.types import Chunk
 
 
 class FakeVectorStore:
-    """Fake satisfying rag.internal.ports.VectorStore."""
+    """Fake satisfying rag.ports.VectorStore."""
 
     def __init__(self) -> None:
         self.embedding: list[float] | None = None
@@ -21,6 +21,10 @@ class FakeVectorStore:
         self.chunks: list[Chunk] = []
         self.embeddings: list[list[float]] = []
         self.vector_size: int | None = None
+        self.listed_chunks: list[Chunk] = []
+        self.list_filters: list[dict[str, str]] = []
+        self.deleted_filters: list[dict[str, str]] = []
+        self.deleted_count = 0
 
     async def search(self, embedding: list[float], top_k: int = 5) -> list[Chunk]:
         self.embedding = embedding
@@ -34,6 +38,14 @@ class FakeVectorStore:
     async def ensure_collection(self, vector_size: int) -> None:
         self.vector_size = vector_size
 
+    async def list_chunks(self, metadata_filter: dict[str, str]) -> list[Chunk]:
+        self.list_filters.append(metadata_filter)
+        return self.listed_chunks
+
+    async def delete_chunks(self, metadata_filter: dict[str, str]) -> int:
+        self.deleted_filters.append(metadata_filter)
+        return self.deleted_count
+
 
 class FakeEmbedder:
     async def embed(self, text: str) -> list[float]:
@@ -41,7 +53,7 @@ class FakeEmbedder:
 
 
 class FakeLLMProvider:
-    """Fake satisfying rag.internal.ports.LLMProvider."""
+    """Fake satisfying rag.ports.LLMProvider."""
 
     def __init__(self, response: str = "[]") -> None:
         self._response = response
@@ -142,6 +154,51 @@ async def test_ingest_document_chunks_embeds_and_indexes_text() -> None:
     assert [chunk.text for chunk in vector_store.chunks] == ["abcde", "defgh"]
     assert vector_store.embeddings == [[5.0, 1.0], [5.0, 1.0]]
     assert vector_store.vector_size == 2
+
+
+async def test_list_documents_aggregates_chunks_by_source() -> None:
+    rag_service, vector_store = _make_rag_service()
+    vector_store.listed_chunks = [
+        Chunk(
+            id="1",
+            text="first",
+            score=0,
+            metadata={"owner_id": "owner-1", "source_id": "owner-1:b.pdf"},
+        ),
+        Chunk(
+            id="2",
+            text="second",
+            score=0,
+            metadata={"owner_id": "owner-1", "source_id": "owner-1:a.pdf"},
+        ),
+        Chunk(
+            id="3",
+            text="third",
+            score=0,
+            metadata={"owner_id": "owner-1", "source_id": "owner-1:b.pdf"},
+        ),
+    ]
+
+    documents = await rag_service.list_documents({"owner_id": "owner-1"})
+
+    assert [(document.source_id, document.chunks_indexed) for document in documents] == [
+        ("owner-1:a.pdf", 1),
+        ("owner-1:b.pdf", 2),
+    ]
+    assert vector_store.list_filters == [{"owner_id": "owner-1"}]
+
+
+async def test_delete_document_reports_whether_chunks_existed() -> None:
+    rag_service, vector_store = _make_rag_service()
+    selection = {"owner_id": "owner-1", "source_id": "owner-1:report.pdf"}
+
+    missing = await rag_service.delete_document(selection)
+    vector_store.deleted_count = 3
+    deleted = await rag_service.delete_document(selection)
+
+    assert missing is False
+    assert deleted is True
+    assert vector_store.deleted_filters == [selection, selection]
 
 
 def test_chunk_text_keeps_headings_and_sentences_together() -> None:

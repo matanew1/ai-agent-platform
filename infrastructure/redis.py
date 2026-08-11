@@ -5,7 +5,7 @@ Stores conversation history per session as
 refreshed on every write so an active conversation never expires mid-use
 but an abandoned one eventually does - see ``RedisSessionStore``.
 Structurally satisfies the ``Memory`` port defined in
-``modules/agent/src/agent/internal/ports.py``.
+``modules/agent/src/agent/ports.py``.
 """
 
 from __future__ import annotations
@@ -37,6 +37,11 @@ _SESSION_LOCK_BLOCKING_TIMEOUT_SECONDS = 60
 # Refreshed on every save_checkpoint, so an active conversation never
 # expires mid-use.
 _SESSION_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 days
+
+
+def _escape_scan_match(value: str) -> str:
+    """Escape Redis glob metacharacters so a session prefix stays literal."""
+    return "".join(f"\\{character}" if character in "\\*?[]" else character for character in value)
 
 
 class RedisError(PlatformError):
@@ -146,6 +151,40 @@ class RedisSessionStore:
                 f"Failed to save checkpoint for session {checkpoint.session_id!r}: {exc}"
             ) from exc
         logger.debug("save_checkpoint: session_id=%r", checkpoint.session_id)
+
+    async def delete_checkpoint(self, session_id: str) -> bool:
+        """Invalidate one hot checkpoint without touching durable history."""
+        try:
+            deleted = await self._client.delete(_SESSION_KEY_PREFIX + session_id)
+        except Exception as exc:
+            raise RedisError(
+                f"Failed to invalidate checkpoint for session {session_id!r}: {exc}"
+            ) from exc
+        return bool(deleted)
+
+    async def list_checkpoints(self, session_prefix: str) -> list[SessionCheckpoint]:
+        """List checkpoints under one already-scoped session-id prefix.
+
+        Redis ``SCAN`` is used instead of ``KEYS`` so listing sessions does
+        not block the server when the keyspace grows. Locks have their own
+        prefix and therefore cannot appear in these results.
+        """
+        key_pattern = f"{_SESSION_KEY_PREFIX}{_escape_scan_match(session_prefix)}*"
+        try:
+            keys = [key async for key in self._client.scan_iter(match=key_pattern, count=100)]
+            if not keys:
+                return []
+            values = await self._client.mget(keys)
+            checkpoints = [
+                SessionCheckpoint.model_validate_json(value)
+                for value in values
+                if value is not None
+            ]
+        except Exception as exc:
+            raise RedisError(
+                f"Failed to list checkpoints for prefix {session_prefix!r}: {exc}"
+            ) from exc
+        return sorted(checkpoints, key=lambda checkpoint: checkpoint.updated_at, reverse=True)
 
     def session_lock(self, session_id: str) -> AbstractAsyncContextManager[None]:
         """Exclusive lock over one session's checkpoint, for the caller to

@@ -16,7 +16,14 @@ from __future__ import annotations
 
 import pytest
 
-from infrastructure.llm import LLMError, _require_content
+from infrastructure.llm import (
+    LLMError,
+    MistralProvider,
+    OllamaProvider,
+    _require_content,
+    _supports_chat_model,
+)
+from shared.types import ModelCatalogSnapshot
 
 
 def test_content_passes_through_unchanged() -> None:
@@ -42,3 +49,72 @@ def test_truncated_completion_explains_the_token_cap() -> None:
 def test_error_names_the_model_when_there_is_no_stop_reason() -> None:
     with pytest.raises(LLMError, match="mistral-small-latest"):
         _require_content("", "mistral-small-latest", None)
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        (OllamaProvider(base_url="http://localhost:11434", model="qwen3:8b"), "qwen3:14b"),
+        (
+            MistralProvider(api_key="test-key", model="mistral-small-latest"),
+            "mistral-medium-latest",
+        ),
+    ],
+)
+def test_generation_options_clone_provider_without_mutating_base(
+    provider: object, model: str
+) -> None:
+    configured = provider.with_options(model=model, temperature=0.3)
+
+    assert configured is not provider
+    assert configured._model == model
+    assert configured._chat.model == model
+    assert configured._chat.temperature == 0.3
+    assert provider._model != model
+
+
+@pytest.mark.parametrize(
+    ("model", "capabilities", "expected"),
+    [
+        ("qwen3:8b", ["completion", "tools"], True),
+        ("bge-m3:latest", ["embedding"], False),
+        ("renamed-vector-model", ["embedding"], False),
+        ("nomic-embed-text:latest", None, False),
+        ("qwen3:8b", None, True),
+    ],
+)
+def test_ollama_catalog_filters_embedding_only_models(
+    model: str, capabilities: list[str] | None, expected: bool
+) -> None:
+    assert _supports_chat_model(model, "bge-m3", capabilities) is expected
+
+
+async def test_ollama_catalog_caches_discovery_for_repeated_configuration_reads() -> None:
+    provider = OllamaProvider(base_url="http://localhost:11434", model="qwen3:8b")
+    calls = 0
+
+    async def discover() -> ModelCatalogSnapshot:
+        nonlocal calls
+        calls += 1
+        return ModelCatalogSnapshot(models=("qwen3:8b",), authoritative=True)
+
+    provider._discover_models = discover
+
+    first = await provider.available_models()
+    second = await provider.available_models()
+
+    assert first is second
+    assert calls == 1
+
+
+async def test_mistral_catalog_exposes_only_configured_model_without_discovery() -> None:
+    provider = MistralProvider(api_key="test-key", model="mistral-small-latest")
+
+    snapshot = await provider.available_models()
+
+    assert provider.provider_name == "mistralai"
+    assert provider.default_temperature == 0.3
+    assert snapshot == ModelCatalogSnapshot(
+        models=("mistral-small-latest",),
+        authoritative=False,
+    )

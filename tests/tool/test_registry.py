@@ -122,10 +122,21 @@ def test_register_local_replaces_existing_tool_with_same_name() -> None:
 async def test_register_local_makes_a_real_tool_file_callable() -> None:
     registry = ToolRegistry()
     registry.register_local(pdf.DEFINITION, pdf.extract_pdf)
+    registry.register_local(pdf.GENERATE_DEFINITION, pdf.generate_pdf)
+    registry.register_local(pdf.EDIT_DEFINITION, pdf.edit_pdf)
     registry.register_local(markdown.DEFINITION, markdown.extract_markdown)
+    registry.register_local(markdown.GENERATE_DEFINITION, markdown.generate_markdown)
+    registry.register_local(markdown.EDIT_DEFINITION, markdown.edit_markdown)
 
     names = {tool.name for tool in registry.get_tools()}
-    assert names == {"extract_pdf", "extract_markdown"}
+    assert names == {
+        "extract_pdf",
+        "generate_pdf",
+        "edit_pdf",
+        "extract_markdown",
+        "generate_markdown",
+        "edit_markdown",
+    }
 
     result = await registry.call_tool("extract_markdown", {"path": "/nonexistent"})
     assert result.is_error is True  # handler ran for real and failed on a missing file

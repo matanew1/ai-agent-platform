@@ -16,16 +16,20 @@ import logging
 import os
 
 import uvicorn
-from agent.internal.graph import AgentError
-from agents.api.router import router as agents_router
+from agent.api.auth import get_current_user
+from agent.api.router import documents_router, models_router
+from agent.api.router import router as agents_router
+from agent.graph import AgentError
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from tool.api.router import router as tool_router
 
 from app.errors import handle_agent_error, handle_not_implemented, handle_platform_error
 from app.health import router as health_router
 from app.lifespan import lifespan
+from shared.artifacts import ARTIFACTS_URL_PATH, get_artifacts_directory
 from shared.logging import configure_logging
 from shared.types import PlatformError
 
@@ -67,6 +71,21 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=[
+        "X-Tools-Invoked",
+        "X-Chunks-Retrieved",
+        "X-Prep-Time-Seconds",
+        "X-Artifacts",
+    ],
+)
+
+# Generated PDF/Markdown files are written only beneath ARTIFACTS_DIR by
+# shared.artifacts and exposed read-only here. StaticFiles rejects methods
+# other than GET/HEAD and prevents URL traversal outside this directory.
+app.mount(
+    ARTIFACTS_URL_PATH,
+    StaticFiles(directory=get_artifacts_directory()),
+    name="artifacts",
 )
 
 app.add_exception_handler(AgentError, handle_agent_error)
@@ -74,7 +93,12 @@ app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
 app.include_router(health_router)
 app.include_router(agents_router)
-app.include_router(tool_router)
+app.include_router(documents_router)
+app.include_router(models_router, dependencies=[Depends(get_current_user)])
+# Tools can perform network and filesystem work, so the composition root
+# protects both registry reads and direct invocation without coupling the
+# standalone ``tool`` module to the agent module's authentication dependency.
+app.include_router(tool_router, dependencies=[Depends(get_current_user)])
 
 logger.debug("ASGI app assembled: %d route(s) registered", len(app.routes))
 

@@ -31,3 +31,10 @@ def format_tool_results(tool_results: list[ToolResult]) -> str:
         f"- {result.tool_name}{' (failed)' if result.is_error else ''}: {result.content!r}"
         for result in tool_results
     )
+
+
+def format_attachments(attachments: list[tuple[str, str]]) -> str:
+    """Render files attached to a single chat turn - (filename, extracted text) pairs."""
+    if not attachments:
+        return "(none)"
+    return "\n".join(f"- {filename}:\n{text}" for filename, text in attachments)
