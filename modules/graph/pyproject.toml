@@ -1,13 +1,15 @@
 [project]
-name = "rag"
+name = "graph"
 version = "0.1.0"
-description = "Retrieval-augmented generation: ingestion/retrieval against a vector store, plus the user-scoped document-library HTTP surface."
+description = "The LangGraph agent workflow: state, prompt templates, and the graph itself."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9",
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
     "fastapi>=0.115",
-    "python-multipart>=0.0.32",
-    "authentication",
+    "rag",
+    "tool",
 ]
 
 # `shared` and `infrastructure` are importable via the workspace's single
@@ -18,4 +20,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rag"]
+packages = ["src/graph"]

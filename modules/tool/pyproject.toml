@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.9",
     "pypdf>=5.0",
     "pyyaml>=6.0",
+    "artifact",
 ]
 
 # `shared` is importable via the workspace's single environment - see

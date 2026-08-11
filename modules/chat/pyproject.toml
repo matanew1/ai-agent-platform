@@ -1,13 +1,16 @@
 [project]
-name = "rag"
+name = "chat"
 version = "0.1.0"
-description = "Retrieval-augmented generation: ingestion/retrieval against a vector store, plus the user-scoped document-library HTTP surface."
+description = "Turn execution: runs the LangGraph workflow for one chat turn and streams the answer, with one cached AgentService runtime per agent-definition version."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9",
     "fastapi>=0.115",
-    "python-multipart>=0.0.32",
+    "agent",
+    "graph",
+    "artifact",
     "authentication",
+    "session",
 ]
 
 # `shared` and `infrastructure` are importable via the workspace's single
@@ -18,4 +21,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/rag"]
+packages = ["src/chat"]
