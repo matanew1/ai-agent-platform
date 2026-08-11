@@ -4,22 +4,22 @@
 
 All tool code lives in `modules/tool/src/tool`, no `internal/` (unlike
 `agent`/`rag` - see [architecture.md](architecture.md#module-internal-layout)
-for why `tool` is the exception): `registry.py` holds `ToolRegistry` (the
+for why `tool` is the exception): `registry/registry.py` holds `ToolRegistry` (the
 module's public entry point) and `RegisteredTool`. Below it, tools split
 into two sibling packages by where they come from, not by anything
 agent-visible - and both are wired into a registry the same explicit way,
 no decorators or import-time side effects either side:
 
-- `tools/` - in-process Python functions. Each file (`pdf.py`, `markdown.py`
+- `entity/` - in-process Python functions. Each file (`pdf.py`, `markdown.py`
   today) defines a module-level `DEFINITION` (`ToolDefinition`) and a plain
   async handler - nothing self-registers. `ToolRegistry.register_local(
   DEFINITION, handler)` is what makes one agent-callable, called once per
   tool from `app/lifespan.py`.
-- `mcp/` - tools adapted from an external MCP server, config-driven:
-  `mcp/mcp-servers.yaml` is one file with one top-level entry per server -
+- `adapters/mcp/` - tools adapted from an external MCP server, config-driven:
+  `adapters/mcp/mcp-servers.yaml` is one file with one top-level entry per server -
   plain data, no Python (see "Implementation status" below);
   `mcp/config.py::load_servers()` parses every entry into
-  `mcp.StdioServerParameters`; `mcp/adapter.py`'s `McpServerAdapter` class
+  `mcp.StdioServerParameters`; `adapters/mcp/adapter.py`'s `McpServerAdapter` class
   connects to one and turns its tools into `RegisteredTool`s.
   `ToolRegistry.register_mcp(server_params, exit_stack)` is
   `register_local`'s counterpart - same "one call per tool source from
@@ -27,16 +27,16 @@ no decorators or import-time side effects either side:
   server is I/O a local tool doesn't need.
 
 `modules/agent` never knows a tool's implementation - it only sees tools
-through the `ToolRegistry` protocol it owns
-(`agent.ports.ToolRegistry`), which `tool.registry.ToolRegistry`
+through the canonical `ToolRegistry` protocol in
+(`infrastructure.tool.protocol.ToolRegistry`), which `tool.registry.registry.ToolRegistry`
 satisfies. The two share a name on purpose (concrete implementation named
 after the port it implements) and are distinguished by module path, not
-name - `agent.ports.ToolRegistry` is the `Protocol`,
-`tool.registry.ToolRegistry` is what actually gets constructed, once, in
+name - `infrastructure.tool.protocol.ToolRegistry` is the `Protocol`,
+`tool.registry.registry.ToolRegistry` is what actually gets constructed, once, in
 `app/lifespan.py`.
 
 ```
-agent -> (agent.ports.ToolRegistry) -> tool.registry.ToolRegistry -> tool.tools / tool.mcp
+agent -> (infrastructure.tool.protocol.ToolRegistry) -> tool.registry.registry.ToolRegistry -> tool.entity / tool.adapters.mcp
 ```
 
 `tool` produces `ToolDefinition`/`ToolResult` shapes mirroring the Model
@@ -44,7 +44,7 @@ Context Protocol's tool schema (see `shared/types.py`) - that's what the
 directory name `modules/mcp/` echoed originally, before this module was
 renamed to `tool` (see `tool/__init__.py`'s docstring on why: `import mcp`
 - the actual MCP Python SDK - no longer collides with a module named
-`tool`, which matters now that `tool/mcp/adapter.py` really does
+`tool`, which matters now that `tool/adapters/mcp/adapter.py` really does
 `import mcp`).
 
 ## Tool definitions
@@ -71,7 +71,7 @@ renamed to `tool` (see `tool/__init__.py`'s docstring on why: `import mcp`
   freeform tool choice (see `agent.graph.execute_tools`), not a
   hardcoded call, so "the LLM asked for a tool that doesn't exist" or "the
   tool ran but failed" are expected, recoverable outcomes, not exceptions
-  to catch everywhere. `tool/mcp/adapter.py`'s handler follows the same
+  to catch everywhere. `tool/adapters/mcp/adapter.py`'s handler follows the same
   contract from the other direction: it *raises* when the remote server
   reports its own tool-level error (`CallToolResult.is_error`), rather than
   inventing a second error channel, so that raise lands in this same
@@ -82,9 +82,9 @@ renamed to `tool` (see `tool/__init__.py`'s docstring on why: `import mcp`
   something calls `registry.register_local(DEFINITION, handler)` -
   `app/lifespan.py` is that one call site, one line per tool.
 - New external-MCP-server-backed tools are the most additive of all: add
-  an entry to `tool/mcp/mcp-servers.yaml` (see the `fetch` entry) with the
+  an entry to `tool/adapters/mcp/mcp-servers.yaml` (see the `fetch` entry) with the
   server's `command`/`args`. `app/lifespan.py` doesn't change - it
-  registers every server `tool.mcp.config.load_servers()` finds, in a
+  registers every server `tool.adapters.mcp.config.load_servers()` finds, in a
   loop. Neither does `adapter.py`, the same open/closed property `tools/`
   gives local tools - and if a server ever needs its arguments massaged,
   that belongs in the YAML for the same reason, not in a branch there.
@@ -101,13 +101,13 @@ External MCP server integration was dropped early on (`mcp_gateway.internal
 .client`/`external.py`, previously verified live against
 `@modelcontextprotocol/server-filesystem`) once the app's only real need
 turned out to be local tools, then re-added once a second real need showed
-up: `tool/mcp/mcp-servers.yaml`'s `fetch` entry configures the official
+up: `tool/adapters/mcp/mcp-servers.yaml`'s `fetch` entry configures the official
 Fetch MCP server (`mcp-server-fetch`, run via `uvx` - no Node/npm
 dependency), which exposes a `fetch` tool (fetch a URL, return its content
 as text) alongside the local tools.
 
-- `tool/mcp/config.py::load_servers()` parses every top-level entry in
-  `tool/mcp/mcp-servers.yaml` into a `mcp.StdioServerParameters` (`command`
+- `tool/adapters/mcp/config.py::load_servers()` parses every top-level entry in
+  `tool/adapters/mcp/mcp-servers.yaml` into a `mcp.StdioServerParameters` (`command`
   + `args` + optional `env`) - one file, plain data, no Python needed to
   add a server. Tested against the real file in
   `tests/tool/test_mcp_config.py` (no mocking - it's just local file
@@ -145,7 +145,7 @@ as text) alongside the local tools.
   agent passes `raw: true` itself (verified live - it returns the exact
   `<title>`). The numbers live in `mcp-servers.yaml`'s comment too, next
   to the setting.
-- `tool/mcp/adapter.py`'s `McpServerAdapter` is the reusable connection
+- `tool/adapters/mcp/adapter.py`'s `McpServerAdapter` is the reusable connection
   piece and doesn't know what a `ToolRegistry` is: construct it directly
   with an already-initialized `mcp.ClientSession` and call `list_tools()`
   to get back a `list[RegisteredTool]` - this is what's unit-tested,
@@ -278,6 +278,29 @@ That is a textbook prompt-injection channel, and pairing it with write
 access to a working tree means a fetched page can attempt repository
 mutations. Enable it only with that pairing in mind - ideally against a
 throwaway clone, not the checkout you work in.
+
+**workos** - evaluated, never wired up even to the point of a live
+connection (unlike `sqlite`/`git` above, which were both connected to and
+called for real). No official first-party WorkOS MCP server exists; WorkOS
+publishes docs on *using AuthKit to secure your own MCP servers*
+(`workos.com/docs/authkit/mcp`), not a server that manages a WorkOS
+account. The only real candidate, `tellahq/workos-mcp` (community,
+unofficial), is TypeScript/Bun rather than a `uvx`-runnable PyPI package -
+already off this repo's pattern before security enters into it - and its
+tool list is not read-only: alongside list/get for users, orgs,
+memberships, invitations, and sessions, it exposes `create`/`update`/
+`delete` on users, `create`/`update`/`delete` on organizations, session
+revocation, password-reset emails, and impersonation-link generation, all
+authenticated with the same `WORKOS_API_KEY` already sitting in this app's
+own `.env` - the key that secures every user's identity for this app, not
+a scoped-down key. `git`'s reasoning applies here with a higher-value
+target: this app's `fetch` tool already pipes attacker-controlled web text
+into the model's prompt, and pairing that prompt-injection channel with a
+tool that can delete a user, revoke a session, or mint an impersonation
+link is a materially worse version of the same compounding risk `git` was
+declined for. Left off entirely rather than added-but-disabled; revisit
+only against a narrowly-scoped, read-only-enforced integration, not this
+package as-is.
 
 The general rule both cases point at: a tool the agent can reach is part
 of the app's attack surface *and* part of its accuracy budget. Adding one

@@ -104,7 +104,7 @@ release deserves one.
 ## [0.1.0] - 2026-08-07
 
 Initial tracked release - `agent`, `rag`, and `tool` are all fully
-implemented and verified against live services (real Ollama/Mistral, real
+implemented and verified against live services (real Ollama, real
 Qdrant, real local tool extraction), not just unit-tested. See
 `README.md` and `.claude/rules/` for the full architecture and
 conventions.
@@ -129,9 +129,7 @@ conventions.
 - `tool`: a local tool registry (`@mcp_tool` decorator) with PDF and
   Markdown text-extraction tools; the agent calls tools by name and typed
   arguments without knowing their implementation.
-- Two selectable LLM providers behind one `LLMProvider` port
-  (`LLM_PROVIDER=ollama|mistralai`): local Ollama (`qwen3:8b` default) or
-  the remote Mistral AI API (`mistral-small-latest`, free-tier eligible).
+- Ollama chat and embedding adapters (`qwen3:8b` is the default chat model).
 - Workflow efficiency passes: heuristic skips for tool-selection
   (`_mentions_a_tool`) and retrieval (`_is_smalltalk`) on turns that
   plainly don't need them, and `OLLAMA_KEEP_ALIVE` to avoid repeated

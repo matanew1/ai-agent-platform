@@ -2,9 +2,9 @@
 
 ## Structure
 
-- Routers live per module, under its `api/` subfolder (see
+- Routers live per module, under its `controller/` subfolder (see
   [architecture.md](architecture.md#module-internal-layout)):
-  `modules/agent/src/agent/api/router.py` defines three `APIRouter`s -
+  `modules/agent/src/agent/controller/router.py` defines three `APIRouter`s -
   `router` (`/agents`: definition CRUD and streaming chat) and
   `documents_router` (`/documents`: the authenticated user's document library,
   internally owner-scoped but not nested under `/agents/{agent_id}`), plus
@@ -29,15 +29,15 @@
 
 ## Pydantic models
 
-- Request and response models are Pydantic (v2) and live in `api/schemas.py`
+- Request and response models are Pydantic (v2) and live in `schemas.py`
   next to the router that uses them - e.g.
-  `modules/agent/src/agent/api/schemas.py` holds public agent-definition
-  and chat schemas. Keep them separate from the module's internal domain
-  models (`agent.graph.AgentState` is not the same type as
-  `ChatRequest`) — don't expose an internal domain/DB model directly as an
+  `modules/agent/src/agent/schemas.py` holds public agent
+  schemas, with chat-turn schemas in `chat.schemas`. Keep them separate
+  from the module's internal domain models (`graph.state.AgentState` is
+  not the same type as `ChatRequest`) — don't expose an internal domain/DB model directly as an
   API response. `GET /health`'s `HealthResponse` is the one exception,
   defined in `app/health.py` alongside its route, for the same reason
-  `/health` isn't in a module's `api/` pair.
+  `/health` isn't in a module's `controller/` pair.
 - Name request models explicitly: `ChatRequest`, not generic `Input`.
 - Use Pydantic validators for request-shape/field validation (`Field(...)`,
   `field_validator`). Cross-field or business-rule validation that needs
@@ -106,7 +106,7 @@ async def handle_not_found(request: Request, exc: NotFoundError) -> JSONResponse
 - Services are constructed once at the composition root
   (`app/lifespan.py`'s `lifespan`, see
   [architecture.md](architecture.md#dependency-injection)) and read from
-  `request.app.state` in module routers today (see `agent/api/router.py`). The
+  `request.app.state` in module routers today (see `agent/controller/router.py`). The
   verified caller is request-scoped via `CurrentUser`/`Depends(...)`; its JWT
   `sub` is the only input to ownership scopes. `app/main.py` applies the same
   dependency while mounting `/models` and `/tools`, keeping the standalone

@@ -14,7 +14,7 @@ tests/
     agent/           — mirrors modules/agent/src/agent
     rag/             — mirrors modules/rag/src/rag
     tool/            — mirrors modules/tool/src/tool
-    infrastructure/  — mirrors infrastructure/
+    infrastructure/  — tests external-service clients only
 ```
 
 Everything here today is a **unit test**: real dependencies (LLM, vector
@@ -31,8 +31,10 @@ fake out, so there's no reason to.
 
 There is no `tests/integration/` tree yet. `agent` and `rag` were instead
 verified live and manually while implementing them (a real Ollama server
-via `infrastructure.llm.{OllamaProvider,OllamaEmbedder}`, a real Qdrant
-collection via `infrastructure.qdrant.QdrantVectorStore`, the full
+via `infrastructure.llm.ollama.OllamaProvider` and
+`infrastructure.llm.ollama.OllamaEmbedder`, a real
+vector-database collection via `infrastructure.vector_database.qdrant.QdrantVectorDatabase`
+plus `infrastructure.rag.vector_store.VectorStoreRepository`, the full
 `AgentService.run`/`RAGService.ingest_document`/`search` pipelines end to
 end through the actual HTTP endpoints) rather than as a committed test - a
 real next step here is turning those manual runs into proper opt-in
@@ -46,41 +48,40 @@ speculatively before there's a real test to put in it.
 ## Unit vs integration
 
 - **Unit tests** exercise one module's logic with every port (`VectorStore`,
-  `Retriever`, `LLMProvider`, ...) replaced by a fake or mock that satisfies
+  `Retriever`, `LanguageModelClient`, ...) replaced by a fake or mock that satisfies
   the `Protocol`. No network, no real DB, no real LLM call. These are the
   majority of the suite and must stay fast (milliseconds each).
-- **Integration tests** exercise a real `infrastructure` adapter against a
-  real backing service (containerized Mongo/Redis/Qdrant via
+- **Integration tests** exercise a real module repository against a
+  real backing service (containerized PostgreSQL/Redis/Qdrant via
   `docker-compose.yml`), or exercise a full vertical slice through the
   FastAPI app with `httpx.AsyncClient`. Mock only the LLM/external network
   calls that would be slow, flaky, or costly — not the infrastructure under
   test.
 - A module's service layer gets unit tests against fakes; its
-  `infrastructure` adapter gets an integration test proving the adapter
+  external adapter gets an integration test proving the adapter
   actually satisfies the port against the real system.
-  `infrastructure/redis.py` and `infrastructure/llm.py` (both
-  `OllamaProvider` and `OllamaEmbedder`) and `infrastructure/qdrant.py` are
+  `agent.repository.cache`, the agent/RAG provider repositories, and
+  `infrastructure/vector_database.py` are
   all implemented and verified (manually, see above) but still have no
   committed integration test - that gap, not a missing implementation, is
-  what to fix first for all three. `tests/infrastructure/test_llm.py` is
+  what to fix first for all three. `tests/agent/test_language_model.py` is
   not that test and doesn't close the gap: it covers
-  `infrastructure/llm.py`'s `_require_content` only, which is a pure
+  `infrastructure/llm/ollama.py`'s `_require_content` only, which is a pure
   function over text a provider already returned, so it needs neither a
   live model nor a mocked SDK internal. It exists as the regression test
   for a real bug (an empty completion being returned as if it were an
   answer, silently dropping every tool call) - the provider classes
   wrapped around it still need the live-service test described above.
-  `database.py`'s CRUD methods and its startup ping are implemented. Unit
-  tests cover the adapter's startup/error behavior with a fake Motor client;
-  a live MongoDB integration test remains an opt-in future improvement,
-  alongside the other infrastructure adapters.
+  `persistence.repository.database.PostgresDatabase` owns the startup health
+  query. Unit tests cover its startup/error behavior with a fake engine; a live
+  PostgreSQL integration test remains an opt-in future improvement.
 
 ## Mocking strategy
 
 - Mock at the **port boundary** (the `Protocol` a module depends on), not
   three layers down inside a third-party client. If a test needs to mock
-  `pymongo`/`motor` internals, that's a sign the code under test is reaching
-  past its own `infrastructure` adapter.
+  SQLAlchemy engine internals, keep that limited to the persistence module's
+  lifecycle test rather than leaking it into service tests.
 - Prefer a small hand-written fake implementing the `Protocol` over
   `MagicMock` when the interface has more than one or two methods — a fake
   catches signature drift; a `MagicMock` doesn't.
