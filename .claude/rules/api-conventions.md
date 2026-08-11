@@ -4,11 +4,16 @@
 
 - Routers live per module, under its `api/` subfolder (see
   [architecture.md](architecture.md#module-internal-layout)):
-  `modules/agents/src/agents/api/router.py` owns all public `/agents` routes,
-  including definition CRUD, document ingestion, chat, and chat streaming.
-  It is mounted from `app/main.py` via `app.include_router(agents_router)`.
-  The private `agent` and `rag` modules expose no HTTP routes. A public router
-  imports `fastapi` and module dependencies only - never `app`,
+  `modules/agent/src/agent/api/router.py` defines three `APIRouter`s -
+  `router` (`/agents`: definition CRUD and streaming chat) and
+  `documents_router` (`/documents`: the authenticated user's document library,
+  internally owner-scoped but not nested under `/agents/{agent_id}`), plus
+  `models_router` (`/models`: provider configuration choices). They are mounted
+  from `app/main.py` via
+  `app.include_router(...)`. `rag` and `tool` expose no HTTP surface of
+  their own besides `tool`'s own `/tools` routes - `rag` is consumed
+  entirely through `agent`'s document routes. A public router imports
+  `fastapi` and module dependencies only - never `app`,
   which would invert the one allowed direction (see
   [architecture.md](architecture.md)). It reaches services built at startup through the generic
   `request.app.state` FastAPI gives every handler, not through an import
@@ -26,15 +31,14 @@
 
 - Request and response models are Pydantic (v2) and live in `api/schemas.py`
   next to the router that uses them - e.g.
-  `modules/agents/src/agents/api/schemas.py` holds public agent-definition
+  `modules/agent/src/agent/api/schemas.py` holds public agent-definition
   and chat schemas. Keep them separate from the module's internal domain
-  models (`agent.internal.graph.AgentState` is not the same type as
+  models (`agent.graph.AgentState` is not the same type as
   `ChatRequest`) — don't expose an internal domain/DB model directly as an
   API response. `GET /health`'s `HealthResponse` is the one exception,
   defined in `app/health.py` alongside its route, for the same reason
   `/health` isn't in a module's `api/` pair.
-- Name request/response models explicitly: `ChatRequest`/`ChatResponse`,
-  not generic `Input`/`Output`.
+- Name request models explicitly: `ChatRequest`, not generic `Input`.
 - Use Pydantic validators for request-shape/field validation (`Field(...)`,
   `field_validator`). Cross-field or business-rule validation that needs
   repository/service access belongs in the service layer, not the schema.
@@ -59,7 +63,7 @@
   remaining `TODO`-stubbed methods — remove once nothing in the request
   path can actually raise it anymore; note that a module catching
   `NotImplementedError` itself and re-raising its own exception, as
-  `agent.internal.graph`'s nodes do, means this handler won't even see it). Shape:
+  `agent.graph`'s nodes do, means this handler won't even see it). Shape:
 
 ```python
 @app.exception_handler(NotFoundError)
@@ -83,18 +87,16 @@ async def handle_not_found(request: Request, exc: NotFoundError) -> JSONResponse
 
 - Resource-oriented paths once there's a resource to name (e.g. a future
   `POST /api/v1/conversations`, `GET /api/v1/conversations/{id}`), not
-  RPC-style verbs in the path. Public conversations are nested under the
-  resource they use: `POST /agents/{agent_id}/chat`.
-- Streaming agent responses get their own clearly-named endpoint rather
-  than a query-param flag that changes the response type of the normal
-  endpoint - `POST /agents/{agent_id}/chat/stream` (`agents/api/router.py`)
-  is the implemented example: same request schema as the normal agent chat,
-  but a chunked
-  `text/plain` `StreamingResponse` of the answer instead of waiting for
-  the whole thing and returning JSON. It only streams the final answer -
-  everything before it (planning, retrieval, tool calls) still has to
-  finish first, same as normal agent chat - see
-  `agent.service.AgentService.run_stream`. A nested resource path
+  RPC-style verbs in the path. Conversations are streaming-only and nested
+  under their agent: `POST /agents/{agent_id}/chat/stream`.
+- Streaming responses use a clearly-named endpoint rather than a query-param
+  flag that changes the response type. The route returns a chunked
+  `text/plain` `StreamingResponse`; retrieval and tool calls finish before
+  the answer begins streaming - see `agent.service.AgentService.run_stream`.
+  Browser-readable `X-Tools-Invoked`, `X-Chunks-Retrieved`,
+  `X-Prep-Time-Seconds`, and `X-Artifacts` headers describe that preparation;
+  generated artifact references are also persisted in session history.
+  A nested resource path
   (`/agents/{agent_id}/chat/stream`),
   not a colon-suffixed custom-method style (`/chat:stream`, Google API
   design conventions) - the latter was tried first and reverted: it's
@@ -104,7 +106,9 @@ async def handle_not_found(request: Request, exc: NotFoundError) -> JSONResponse
 - Services are constructed once at the composition root
   (`app/lifespan.py`'s `lifespan`, see
   [architecture.md](architecture.md#dependency-injection)) and read from
-  `request.app.state` in module routers today (see `agents/api/router.py`). Prefer
-  `Depends(...)` for request-scoped things (e.g. an auth-derived user)
-  if/when those show up - routes still never instantiate a service or
-  infrastructure client themselves.
+  `request.app.state` in module routers today (see `agent/api/router.py`). The
+  verified caller is request-scoped via `CurrentUser`/`Depends(...)`; its JWT
+  `sub` is the only input to ownership scopes. `app/main.py` applies the same
+  dependency while mounting `/models` and `/tools`, keeping the standalone
+  tool module decoupled from agent authentication. Routes still never
+  instantiate a service or infrastructure client themselves.
