@@ -156,7 +156,9 @@ streaming conversation with a configured agent.
 
 The PDF and Markdown generation/editing tools store new files beneath
 `ARTIFACTS_DIR` (`./artifacts` by default), choose a collision-free sanitized
-filename, and return a read-only `/artifacts/<filename>` download URL. Editing
+filename, and return a read-only `/artifacts/<filename>` download URL. MongoDB
+records the verified owner before that URL is returned, and downloads require
+the same bearer identity; another authenticated user receives 404. Editing
 is copy-on-write: it accepts that URL or its safe filename and never changes
 the source artifact. Tool callers may suggest an output filename but cannot
 choose its server filesystem path. Generated artifacts are local deployment
@@ -375,12 +377,14 @@ completion instead of passing it off as an answer, naming
 ### Session concurrency & scaling
 
 `AgentService`/`AgentGraph` hold no per-session state - every call gets a
-fresh `AgentState`, and conversation history lives entirely in Redis
-(`agent_session:{session_id}`), not in process memory. Different sessions
-never contend with each other and the app is horizontally scalable as a
-result: any instance behind a load balancer can serve any session, since
-Redis is the single shared source of truth. Two things specific to a
-*single* session:
+fresh `AgentState`. MongoDB's `agent_sessions` collection is the durable
+source of truth for session metadata and the most recent 40 messages retained
+for the model context window. Redis holds only a
+7-day read-through hot checkpoint plus the distributed lock; an eviction or
+cache TTL no longer deletes the user's retained conversation. Different
+sessions never contend with each other and any API instance can serve any
+session because both stores are shared. Two things specific to a *single*
+session:
 - Concurrent requests on the *same* `session_id` (a double-send, two tabs,
   a client retry) are serialized through `memory.session_lock` -
   `RedisSessionStore`'s `SET NX`-based distributed lock (see
@@ -390,11 +394,12 @@ Redis is the single shared source of truth. Two things specific to a
   both save, with whichever save lands last silently discarding the
   other's turn - verified live by firing two concurrent agent-chat requests
   at one `session_id` and confirming both turns land in the
-  final Redis-stored history, not just one.
-- Session checkpoints carry a 7-day TTL (`_SESSION_TTL_SECONDS`,
-  `infrastructure/redis.py`), refreshed on every save, so an abandoned
-  session eventually ages out of Redis instead of accumulating forever;
-  an active conversation never expires mid-use.
+  final Mongo-stored context history, not just one.
+- The Redis hot copy carries a 7-day TTL (`_SESSION_TTL_SECONDS`,
+  `infrastructure/redis.py`), refreshed on every save. An abandoned session
+  ages out of the cache, then transparently reloads from MongoDB when opened
+  again. `HybridSessionStore` invalidates the old Redis value before a durable
+  Mongo write so a cache-write failure can never serve stale history.
 
 The actual ceiling on *concurrent* sessions today is the LLM backend, not
 this module: `LLM_PROVIDER=ollama` (default) means every session's calls

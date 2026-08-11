@@ -30,7 +30,12 @@ async def get_current_user(
         )
     token = credentials.credentials if credentials is not None else None
     try:
-        return await authenticator.authenticate(token)
+        current_user = await authenticator.authenticate(token)
+        # Composition-level dependencies (notably the standalone tool router)
+        # can authorize without importing this agent-owned dependency while
+        # still making the verified principal available to their handler.
+        request.state.current_user = current_user
+        return current_user
     except AuthenticationError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

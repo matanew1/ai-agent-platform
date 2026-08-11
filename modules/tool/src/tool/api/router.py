@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from shared.types import ToolDefinition, ToolResult
+from shared.artifacts import ArtifactAccessRepository
+from shared.auth import AuthenticatedUser
+from shared.types import ArtifactReference, ToolDefinition, ToolResult
 from tool.api.schemas import ToolCallRequest
 from tool.registry import ToolRegistry
 
@@ -22,4 +24,20 @@ async def list_tools(request: Request) -> list[ToolDefinition]:
 async def call_tool(name: str, payload: ToolCallRequest, request: Request) -> ToolResult:
     """Run a registered tool with JSON arguments."""
     tool_registry: ToolRegistry = request.app.state.tool_registry
-    return await tool_registry.call_tool(name, payload.arguments)
+    result = await tool_registry.call_tool(name, payload.arguments)
+    artifact = _artifact_reference(result)
+    current_user: AuthenticatedUser | None = getattr(request.state, "current_user", None)
+    if artifact is not None and current_user is not None:
+        access: ArtifactAccessRepository = request.app.state.artifact_access
+        await access.grant(current_user.id, [artifact])
+    return result
+
+
+def _artifact_reference(result: ToolResult) -> ArtifactReference | None:
+    if result.is_error or not isinstance(result.content, dict):
+        return None
+    filename = result.content.get("filename")
+    download_url = result.content.get("download_url")
+    if not isinstance(filename, str) or not isinstance(download_url, str):
+        return None
+    return ArtifactReference(filename=filename, download_url=download_url)

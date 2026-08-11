@@ -135,7 +135,8 @@ class SessionCheckpoint(BaseModel):
 
     Attributes:
         session_id: Conversation/session identifier.
-        history: Prior turns, oldest first.
+        history: Recent context-window turns, oldest first. AgentService
+            bounds this to its configured message ceiling before saving.
         updated_at: Last time this checkpoint was written.
     """
 

@@ -11,7 +11,7 @@ import pytest
 from agent.graph import AgentError
 from agent.service import AgentService
 
-from shared.types import Chunk, SessionCheckpoint, ToolDefinition, ToolResult
+from shared.types import ChatMessage, Chunk, SessionCheckpoint, ToolDefinition, ToolResult
 
 
 class FakeLLMProvider:
@@ -314,6 +314,29 @@ async def test_run_stream_folds_attachments_into_the_answer_prompt_only() -> Non
     saved_message = memory.saved[0].history[0]
     assert saved_message.content == "summarize this"
     assert "quarterly numbers" not in saved_message.content
+
+
+async def test_run_stream_bounds_durable_history_to_the_context_window() -> None:
+    memory = FakeMemory()
+    memory.seed(
+        SessionCheckpoint(
+            session_id="s1",
+            history=[ChatMessage(role="user", content=f"message-{index}") for index in range(50)],
+        )
+    )
+    llm = FakeLLMProvider(answer="bounded answer")
+    service, *_ = _make_service(memory=memory, llm=llm)
+
+    _, stream = await service.run_stream(session_id="s1", message="latest question")
+    async for _ in stream:
+        pass
+
+    saved = memory.saved[-1]
+    assert len(saved.history) == 40
+    assert saved.history[-2].content == "latest question"
+    assert saved.history[-1].content == "bounded answer"
+    assert "message-0" not in llm.prompts[-1]
+    assert "message-49" in llm.prompts[-1]
 
 
 async def test_run_stream_wraps_a_generation_failure_as_agent_error() -> None:
