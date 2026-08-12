@@ -117,6 +117,15 @@ def _safe_path(return_to: object) -> str:
     return return_to
 
 
+def _auth_error_redirect(frontend_url: str, return_to: str) -> RedirectResponse:
+    """Build the shared "sign-in failed" redirect and clear the login-state cookie."""
+    response = RedirectResponse(
+        f"{frontend_url}{return_to}?auth_error=1", status_code=status.HTTP_302_FOUND
+    )
+    response.delete_cookie(LOGIN_STATE_COOKIE_NAME)
+    return response
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -173,21 +182,13 @@ async def callback(
             bool(code),
             bool(saved),
         )
-        response = RedirectResponse(
-            f"{frontend_url}{return_to}?auth_error=1", status_code=status.HTTP_302_FOUND
-        )
-        response.delete_cookie(LOGIN_STATE_COOKIE_NAME)
-        return response
+        return _auth_error_redirect(frontend_url, return_to)
 
     try:
         result = await authenticator.exchange_code(code)
     except (AuthenticationError, AuthenticationUnavailableError) as exc:
         logger.warning("Auth callback code exchange failed: %s", exc)
-        response = RedirectResponse(
-            f"{frontend_url}{return_to}?auth_error=1", status_code=status.HTTP_302_FOUND
-        )
-        response.delete_cookie(LOGIN_STATE_COOKIE_NAME)
-        return response
+        return _auth_error_redirect(frontend_url, return_to)
 
     response = RedirectResponse(f"{frontend_url}{return_to}", status_code=status.HTTP_302_FOUND)
     response.set_cookie(

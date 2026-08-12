@@ -25,6 +25,7 @@ from typing import Literal, cast
 
 import workos
 from cryptography.fernet import Fernet
+from jwt.exceptions import PyJWKClientConnectionError
 from workos import AsyncWorkOSClient
 from workos.session import (
     AuthenticateWithSessionCookieFailureReason,
@@ -177,6 +178,14 @@ def _to_authenticated_user(user: Mapping[str, object]) -> AuthenticatedUser:
     (code exchange) or round-tripped through our own sealed cookie
     (session validation/refresh) - both store the same fields.
     """
+    subject = user.get("id")
+    if not isinstance(subject, str) or not subject.strip():
+        # Mirrors the old JWKS verifier's explicit `sub` check - a
+        # malformed/truncated user dict (a corrupted sealed cookie, an
+        # unexpected API response shape) must not silently become a valid
+        # principal, since this id is used as the owner_id for resource
+        # scoping throughout agent/artifact/rag routes.
+        raise AuthenticationError("The WorkOS user record has no valid id.")
     first_name = user.get("first_name")
     last_name = user.get("last_name")
     display_name = (
@@ -185,7 +194,7 @@ def _to_authenticated_user(user: Mapping[str, object]) -> AuthenticatedUser:
     email = user.get("email")
     avatar_url = user.get("profile_picture_url")
     return AuthenticatedUser(
-        id=str(user.get("id", "")),
+        id=subject.strip(),
         email=email if isinstance(email, str) else None,
         display_name=display_name,
         avatar_url=avatar_url if isinstance(avatar_url, str) else None,
@@ -263,8 +272,18 @@ class AuthRepository:
         # per its own docstring (Fernet decrypt + JWT verify) - but it still
         # calls a PyJWKClient that can do a blocking HTTP fetch on a cache
         # miss, so it runs off-loop the same way the old JWKS verifier's
-        # decode step did.
-        result = await asyncio.to_thread(session.authenticate)
+        # decode step did. That fetch only catches jwt.InvalidTokenError
+        # internally (confirmed against the installed SDK's source) - a
+        # JWKS-endpoint outage raises PyJWKClientConnectionError straight
+        # through, same failure mode the old JWKSAuthenticator explicitly
+        # handled.
+        try:
+            result = await asyncio.to_thread(session.authenticate)
+        except PyJWKClientConnectionError as exc:
+            logger.error("Authentication JWKS endpoint is unavailable: %s", exc)
+            raise AuthenticationUnavailableError(
+                "The authentication provider is temporarily unavailable."
+            ) from exc
         if isinstance(result, AuthenticateWithSessionCookieSuccessResponse):
             return SessionResult(
                 user=_to_authenticated_user(result.user or {}), sealed_session=sealed_session

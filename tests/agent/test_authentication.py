@@ -22,6 +22,7 @@ from authentication.repository import (
     build_authenticator_from_env,
     cookie_policy,
 )
+from jwt.exceptions import PyJWKClientConnectionError
 from workos.session import (
     AuthenticateWithSessionCookieErrorResponse,
     AuthenticateWithSessionCookieFailureReason,
@@ -80,7 +81,8 @@ class _FakeAuthenticateResponse:
 class _FakeSession:
     """Stands in for ``workos.session.AsyncSession``."""
 
-    authenticate_result: Any
+    authenticate_result: Any = None
+    authenticate_error: Exception | None = None
     refresh_result: Any = None
     logout_url_result: str | None = None
     logout_url_error: Exception | None = None
@@ -88,6 +90,8 @@ class _FakeSession:
 
     def authenticate(self) -> Any:
         self.calls.append("authenticate")
+        if self.authenticate_error is not None:
+            raise self.authenticate_error
         return self.authenticate_result
 
     async def refresh(
@@ -304,6 +308,34 @@ async def test_authenticate_session_distinguishes_refresh_network_error() -> Non
     )
 
     with pytest.raises(AuthenticationUnavailableError):
+        await authenticator.authenticate_session("some-sealed-session")
+
+
+async def test_authenticate_session_distinguishes_jwks_outage_from_a_bad_token() -> None:
+    """A JWKS-endpoint outage on session.authenticate()'s signing-key fetch
+    only surfaces as PyJWKClientConnectionError (confirmed against the
+    installed SDK's source) - must map to Unavailable, not a generic 401,
+    the same distinction the old JWKS verifier made."""
+    session = _FakeSession(authenticate_error=PyJWKClientConnectionError("jwks unreachable"))
+    authenticator = AuthRepository(
+        _settings(), client=_FakeClient(_FakeUserManagement(session=session))
+    )
+
+    with pytest.raises(AuthenticationUnavailableError):
+        await authenticator.authenticate_session("some-sealed-session")
+
+
+async def test_authenticate_session_rejects_a_user_with_no_id() -> None:
+    session = _FakeSession(
+        authenticate_result=AuthenticateWithSessionCookieSuccessResponse(
+            authenticated=True, session_id="session_1", user={"email": "person@example.com"}
+        )
+    )
+    authenticator = AuthRepository(
+        _settings(), client=_FakeClient(_FakeUserManagement(session=session))
+    )
+
+    with pytest.raises(AuthenticationError):
         await authenticator.authenticate_session("some-sealed-session")
 
 
