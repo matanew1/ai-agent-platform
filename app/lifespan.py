@@ -4,10 +4,10 @@ logic.
 Builds ``infrastructure`` adapters and module services **once, per
 process** - this function runs exactly once (FastAPI calls it once per
 app lifetime, not per request) - and attaches them to ``app.state`` so
-route handlers never construct a service themselves. Every infrastructure
+route handlers never construct services themselves. Every infrastructure
 connection below must never happen per chat call, only once here. See
 ``.claude/rules/architecture.md`` (dependency injection). One deliberate
-exception to "once, here": ``agent.runtime.AgentRuntimeFactory`` (built
+exception to "once, here": ``chat.factory.AgentRuntimeFactory`` (built
 below) does not itself compile anything - it lazily compiles (and caches)
 one ``AgentService`` per agent-definition version on first use, since
 definitions are created/edited at runtime and there is no fixed set to
@@ -22,23 +22,27 @@ import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
+from functools import partial
 
-from agent.definitions import AgentDefinitionService
-from agent.runtime import AgentRuntimeFactory
+from agent.repository import AgentRepository
+from agent.service import AgentService
+from artifact.repository import ArtifactRepository
+from artifact.service import ArtifactService
+from authentication.repository import build_authenticator_from_env
+from chat.factory import AgentRuntimeFactory
 from fastapi import FastAPI
+from rag.repository import RagRepository
 from rag.service import RAGService
-from tool.mcp.config import load_servers
-from tool.registry import ToolRegistry
-from tool.tools import markdown, pdf
+from session.repository import SessionRepository
+from session.service import HybridSessionStore
+from tool.service import ToolService
+from tool.tools.local import markdown, pdf
+from tool.tools.mcp.config import load_servers
 
-from infrastructure.agent_definitions import MongoAgentDefinitionRepository
-from infrastructure.artifacts import MongoArtifactAccessRepository
-from infrastructure.auth import build_authenticator_from_env
-from infrastructure.database import MongoDatabase
-from infrastructure.llm import MistralProvider, OllamaEmbedder, OllamaProvider
-from infrastructure.qdrant import QdrantVectorStore
-from infrastructure.redis import RedisSessionStore
-from infrastructure.sessions import HybridSessionStore, MongoSessionRepository
+from infrastructure.cache.redis import RedisCache
+from infrastructure.database.postgres import PostgresDatabase
+from infrastructure.llm.ollama import OllamaEmbedder, OllamaProvider
+from infrastructure.vector_database.qdrant import QdrantVectorDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +55,7 @@ def _parse_reasoning(raw: str | None) -> bool | str | None:
     Unset -> ``None`` (leave the model's own default alone). ``"true"``/
     ``"false"`` -> a bool (fully on/off). Anything else (``"low"``,
     ``"medium"``, ``"high"``) is passed through as a reasoning-effort
-    string - see ``infrastructure/llm.py``'s ``OllamaProvider`` docstring.
+    string - see ``infrastructure.llm.ollama``'s ``OllamaProvider`` docstring.
     """
     if raw is None:
         return None
@@ -74,36 +78,9 @@ def _parse_temperature(raw: str | None) -> float:
     return temperature
 
 
-def _build_llm_provider() -> OllamaProvider | MistralProvider:
-    """Construct the configured LLM provider from the environment.
-
-    ``LLM_PROVIDER`` picks which one - ``"ollama"`` (default, local) or
-    ``"mistralai"`` (remote, needs ``MISTRAL_API_KEY``). See
-    ``infrastructure/llm.py`` for how to add a third provider without
-    touching this function's call site below.
-
-    Returns:
-        Either concrete provider - both structurally satisfy
-        ``agent.ports.LLMProvider``.
-
-    Raises:
-        RuntimeError: ``LLM_PROVIDER`` is unrecognized, or is ``"mistralai"``
-            with no ``MISTRAL_API_KEY`` set - fail at startup, not on the
-            first chat request.
-    """
-    provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+def _build_llm_provider() -> OllamaProvider:
+    """Construct the local Ollama chat provider from the environment."""
     temperature = _parse_temperature(os.getenv("LLM_TEMPERATURE"))
-    if provider == "mistralai":
-        api_key = os.getenv("MISTRAL_API_KEY")
-        if not api_key:
-            raise RuntimeError("LLM_PROVIDER=mistralai requires MISTRAL_API_KEY to be set.")
-        return MistralProvider(
-            api_key=api_key,
-            model=os.getenv("MISTRAL_MODEL", "mistral-medium-latest"),
-            temperature=temperature,
-        )
-    if provider != "ollama":
-        raise RuntimeError(f"Unknown LLM_PROVIDER {provider!r} - expected 'ollama' or 'mistralai'.")
     return OllamaProvider(
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
@@ -134,32 +111,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """
     logger.info("Lifespan startup: building infrastructure + module services (singleton)")
 
-    # SECTION 1 - Build infrastructure adapters. Construction only: Qdrant
+    # SECTION 1 - Build infrastructure adapters. Construction only: the
     # and the LLM provider connect lazily on first use, so there's nothing
     # to await for them yet.
     authenticator = build_authenticator_from_env()
-    database = MongoDatabase(
-        connection_uri=os.getenv("MONGODB_URI", "mongodb://localhost:27017"),
-        database_name=os.getenv("MONGODB_DATABASE", "ai_agent_platform"),
+    database = PostgresDatabase(
+        os.getenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_agent_platform",
+        )
     )
-    redis_sessions = RedisSessionStore(redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-    mongo_sessions = MongoSessionRepository(database)
-    artifact_access = MongoArtifactAccessRepository(database)
-    memory = HybridSessionStore(durable=mongo_sessions, hot=redis_sessions)
-    vector_store = QdrantVectorStore(
+    redis_cache = RedisCache(redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+    durable_sessions = SessionRepository(database.session_factory)
+    artifact_service = ArtifactService(ArtifactRepository(database.session_factory))
+    memory = HybridSessionStore(durable=durable_sessions, hot=redis_cache)
+    vector_database = QdrantVectorDatabase(
         url=os.getenv("QDRANT_URL", "http://localhost:6333"),
         collection_name=os.getenv("QDRANT_COLLECTION", "documents"),
     )
+    vector_store = RagRepository(vector_database)
     llm = _build_llm_provider()
     embedder = _build_embedder()
 
     # SECTION 2 - Open connections that need an explicit connect step.
     await database.connect()
-    await mongo_sessions.ensure_indexes()
-    await artifact_access.ensure_indexes()
-    await redis_sessions.connect()
+    await redis_cache.connect()
     await memory.migrate_hot_checkpoints()
-    logger.debug("Mongo + Redis connections opened")
+    logger.debug("PostgreSQL + cache connections opened")
 
     # From here on, everything through SECTION 6's yield runs inside this
     # try so that a failure in any of it (e.g. SECTION 3B's MCP server
@@ -169,19 +147,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     try:
         # SECTION 3 - Build the tool registry. Local tools are plain
         # functions (tool/tools/*.py) with no registration magic of their
-        # own - each is registered explicitly, once, right here.
+        # own - each is registered explicitly, once, right here. The
+        # generate/edit tools need `artifact_service` (to store what they
+        # produce), bound here via `partial` since a tool handler is called
+        # with only the LLM-supplied `arguments` dict - see
+        # `tool.service.ToolService.call_tool`.
         tool_registry = (
-            ToolRegistry()
+            ToolService()
             .register_local(pdf.DEFINITION, pdf.extract_pdf)
-            .register_local(pdf.GENERATE_DEFINITION, pdf.generate_pdf)
-            .register_local(pdf.EDIT_DEFINITION, pdf.edit_pdf)
+            .register_local(
+                pdf.GENERATE_DEFINITION,
+                partial(pdf.generate_pdf, artifact_service=artifact_service),
+            )
+            .register_local(
+                pdf.EDIT_DEFINITION, partial(pdf.edit_pdf, artifact_service=artifact_service)
+            )
             .register_local(markdown.DEFINITION, markdown.extract_markdown)
-            .register_local(markdown.GENERATE_DEFINITION, markdown.generate_markdown)
-            .register_local(markdown.EDIT_DEFINITION, markdown.edit_markdown)
+            .register_local(
+                markdown.GENERATE_DEFINITION,
+                partial(markdown.generate_markdown, artifact_service=artifact_service),
+            )
+            .register_local(
+                markdown.EDIT_DEFINITION,
+                partial(markdown.edit_markdown, artifact_service=artifact_service),
+            )
         )
 
         # SECTION 3B - Register every external MCP server declared in
-        # tool/mcp/mcp-servers.yaml the same explicit way, just awaited
+        # tool/adapters/mcp/mcp-servers.yaml the same explicit way, just awaited
         # instead of a plain call - connecting is I/O a local tool doesn't
         # need. Adding a server is a new YAML entry, not a code change here.
         # mcp_exit_stack keeps every such connection open for the process's
@@ -191,30 +184,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             tool_registry = await tool_registry.register_mcp(server_params, mcp_exit_stack)
 
         logger.debug("Tool registry ready: %s", [t.name for t in tool_registry.get_tools()])
-        agent_definition_service = AgentDefinitionService(
-            repository=MongoAgentDefinitionRepository(database),
+        agent_service = AgentService(
+            repository=AgentRepository(database.session_factory),
             tool_registry=tool_registry,
             model_catalog=llm,
         )
 
         # SECTION 4 - Build module services, injecting the infrastructure and
         # registry built above through their constructors.
-        # RAG_RERANK reuses the same llm instance built above for AgentService -
-        # no second provider, no second config. RAGService treats llm=None as
-        # "don't rerank", so this line is the only thing the toggle touches.
-        # Defaults on: measured 1/3 -> 3/3 top-1 accuracy on adversarial
-        # queries (lexical-decoy passages that outscore the actual answer
-        # on raw embedding similarity) for ~0.8s added latency per search -
-        # see .claude/rules/architecture.md's "Reranking" section.
-        rerank_enabled = os.getenv("RAG_RERANK", "true").strip().lower() == "true"
-        rag_service = RAGService(
-            vector_store=vector_store, embedder=embedder, llm=llm if rerank_enabled else None
-        )
+        rag_service = RAGService(vector_store=vector_store, embedder=embedder)
         # AgentRuntimeFactory does not compile anything here - unlike every
         # other service in this function, there is no fixed set of agent
         # definitions to build up front. It lazily compiles (and caches) one
         # AgentService per definition version on first use - see
-        # agent.runtime's module docstring for why that's the right shape
+        # chat.factory's module docstring for why that's the right shape
         # here, not a gap in "build once at startup".
         agent_runtime_factory = AgentRuntimeFactory(
             llm=llm,
@@ -228,10 +211,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # .claude/rules/architecture.md (dependency injection).
         app.state.tool_registry = tool_registry
         app.state.authenticator = authenticator
-        app.state.artifact_access = artifact_access
+        app.state.artifact_service = artifact_service
         app.state.rag_service = rag_service
         app.state.session_memory = memory
-        app.state.agent_definition_service = agent_definition_service
+        app.state.agent_service = agent_service
         app.state.agent_runtime_factory = agent_runtime_factory
         app.state.model_catalog = llm
 
@@ -242,5 +225,5 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # SECTION 7 - Release connections opened in SECTION 2 and SECTION 3B.
         logger.info("Lifespan shutdown: releasing connections")
         await mcp_exit_stack.aclose()
-        await redis_sessions.close()
+        await redis_cache.close()
         await database.close()

@@ -16,18 +16,18 @@ between business logic and the infrastructure that backs it.
 - Python 3.12, [uv](https://docs.astral.sh/uv/) for dependency management and running
 - FastAPI — HTTP boundary
 - LangGraph — agent orchestration / state machines
-- LangChain — LLM & tool abstractions (`ChatOllama`, `ChatMistralAI`, `OllamaEmbeddings` - see `infrastructure/llm.py`)
-- MongoDB — document persistence (agent definitions)
+- LangChain — LLM & tool abstractions (`ChatOllama`, `OllamaEmbeddings`)
+- PostgreSQL — relational persistence (agents, sessions, artifacts)
 - Redis — cache, short-lived state, agent session memory
 - Qdrant — vector store for RAG
-- Model Context Protocol (MCP) — external tool servers: `fetch`, `time`, `duckduckgo` (see `tool/mcp/`)
+- Model Context Protocol (MCP) — external tool servers: `fetch`, `time`, `duckduckgo` (see `tool/adapters/mcp/`)
 
 **Architecture:** see [architecture rules](.claude/rules/architecture.md) for
 the full dependency-direction contract. In short:
 
 ```
 app
- └─ agent      (LangGraph workflow + versioned agent definitions + the public /agents HTTP surface, one module)
+ └─ agent      (LangGraph workflow + versioned agents + the public /agents HTTP surface, one module)
      └─ rag / tool
          └─ infrastructure
 ```
@@ -38,9 +38,9 @@ concrete class, directly — only through an interface (`Protocol`) each
 owns in its own `ports.py`, implemented in `infrastructure`/`rag` and wired
 together at the composition root (`app/lifespan.py`). Everything wired
 there is a singleton for the process's lifetime - built once, never
-per-request - with one deliberate exception: `agent.runtime.AgentRuntimeFactory`
-lazily compiles (and caches) one `AgentService` per agent-definition
-version on first use, since definitions are created/edited at runtime and
+per-request - with one deliberate exception: `chat.factory.AgentRuntimeFactory`
+lazily compiles (and caches) one `ChatService` per agent
+version on first use, since agents are created/edited at runtime and
 there's no fixed set to pre-compile at startup. See
 [architecture.md](.claude/rules/architecture.md#dependency-injection).
 
@@ -48,29 +48,25 @@ there's no fixed set to pre-compile at startup. See
 implemented, not scaffolding - a real LangGraph workflow
 (`retrieve_context` -> `execute_tools` -> streamed `generate_answer`, with
 retrieval feeding context-aware tool execution) calling a real LLM
-(`LLM_PROVIDER=ollama`, local via
-`ChatOllama` - including Ollama's hosted cloud models, e.g.
-`OLLAMA_MODEL=minimax-m3:cloud` - or `mistralai`, remote via
-`ChatMistralAI`; both real, picked in `app/lifespan.py`'s
-`_build_llm_provider`), real retrieval/ingestion against a real Qdrant
-collection (optionally reranked by that same LLM before results are
-returned, on by default - see architecture.md's "Reranking"), and a real
+(`ChatOllama`, including Ollama's hosted cloud models such as
+`OLLAMA_MODEL=minimax-m3:cloud`), real retrieval/ingestion against a real Qdrant
+collection, and a real
 tool registry: local pdf/markdown extraction/generation/editing plus three
 tools adapted from external MCP servers (`fetch`, `time`, `duckduckgo` -
 see [tool-conventions.md](.claude/rules/tool-conventions.md), which also
 documents two servers evaluated and deliberately left disabled, `sqlite`
 and `git`, and the measured tool-selection-accuracy method behind both
 calls). All of it is verified against live services, not just unit-tested.
-`agent` persists versioned agent definitions through `/agents`: each has an
+`agent` persists versioned agents through `/agents`: each has an
 independent prompt and tool allowlist, plus a Redis session namespace, with
 a streaming chat route (`/agents/{agent_id}/chat/stream`, which also
 accepts optional ephemeral file attachments folded into that turn's answer
 only). Documents live in a separate, user-scoped library (`/documents`,
 `/documents/file` - not nested under `/agents/{agent_id}`) shared by every
 agent belonging to the authenticated user, rather than tied to one agent. CORS is
-configurable via `APP_CORS_ORIGINS` (`app/main.py`). MongoDB CRUD is
-implemented and
-verified at startup with a ping. WorkOS AuthKit bearer JWTs are verified
+configurable via `APP_CORS_ORIGINS` (`app/main.py`). PostgreSQL is verified
+at startup with a health query; schema changes are applied through Alembic.
+WorkOS AuthKit bearer JWTs are verified
 through cached JWKS; the verified `sub` is the only source of ownership, and
 the app composition root also protects model-catalog and tool-registry access.
 Direct `POST /tools/{name}` still bypasses the agent's own tool-call mediation,
@@ -101,12 +97,11 @@ cross-module port violation is now just an ordinary same-package import.
   single implementation "in case we need it later." Add it when the second
   concrete case actually shows up.
 - Keep modules isolated: `modules/agent`, `modules/rag`, and `modules/tool`
-  do not import each other's concrete classes — only the `Protocol` ports
-  each owns in its own `ports.py`, and only when the dependency direction
-  below allows it. All three modules are flat: everything lives at
-  `src/<name>/` root, no `internal/` subpackage - a module's file layout
-  isn't a hiding place, the discipline is "depend on the port, not the
-  concrete class" enforced by review, not by a directory. See
+  do not import each other's concrete classes — only canonical `Protocol`
+  contracts from `infrastructure/`, and only when the dependency direction
+  below allows it. All modules use the same semantic layers:
+  `controller/`, `service/`, `repository/`, `dto/`, and `entity/` where
+  needed. See
   [architecture.md](.claude/rules/architecture.md#module-internal-layout).
 - New dependencies on **infrastructure resources** (databases, caches,
   vector stores, hosted LLM APIs) go through `infrastructure/`, never used
@@ -128,7 +123,7 @@ app
 **Forbidden**
 
 ```
-agent -> mongodb
+agent -> postgresql
 agent -> redis
 agent -> qdrant
 rag   -> agent

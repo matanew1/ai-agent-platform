@@ -16,8 +16,7 @@ checklist version plus the troubleshooting steps that come up most.
    (`:8082`) and Redis Commander (`:8083`). None of the admin UIs are app
    runtime dependencies - only Mongo/Redis/Qdrant are.
 
-2. **Pull local models** (only needed for `LLM_PROVIDER=ollama`, the
-   default - skip if using `mistralai`):
+2. **Pull Ollama models**:
    ```bash
    ollama pull qwen3:8b   # chat model, ~5.2GB
    ollama pull bge-m3     # embedding model, ~1.2GB
@@ -30,7 +29,7 @@ checklist version plus the troubleshooting steps that come up most.
    is not optional even for all-defaults local dev - `app/main.py` only
    reads `.env` if it exists (`load_dotenv`); without it every value
    silently falls back to code defaults, which is fine for infra hosts/ports
-   but means `MISTRAL_API_KEY` etc. never gets picked up.
+   but means the configured settings never get picked up.
 
 4. **Install the workspace:** `uv sync` (root + `agent`/`agents`/`rag`/`tool`
    workspace members - see the root `pyproject.toml`'s
@@ -73,7 +72,7 @@ discipline).
   dimensionality the first-ever embedding had, and a different embedding
   model almost always changes that dimensionality. Re-ingest everything, or
   point `QDRANT_COLLECTION` at a fresh collection name.
-- **A new agent definition's first chat is noticeably slower than
-  subsequent ones:** expected - `AgentRuntimeFactory` (`modules/agent/src/agent/runtime.py`)
+- **A new agent's first chat is noticeably slower than
+  subsequent ones:** expected - `AgentRuntimeFactory` (`modules/chat/src/chat/factory.py`)
   lazily compiles a runtime (including the LangGraph workflow) on first use
-  per agent definition/version, then caches it for the process's lifetime.
+  per agent/version, then caches it for the process's lifetime.

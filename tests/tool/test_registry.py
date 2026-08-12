@@ -1,4 +1,4 @@
-"""Unit tests for tool.registry.ToolRegistry.
+"""Unit tests for tool.service.ToolService.
 
 Exercises ``register_local``/``get_tools``/``call_tool`` directly - against
 hand-built definitions for the generic mechanics, and against the real
@@ -14,8 +14,8 @@ from contextlib import AsyncExitStack
 
 import pytest
 from mcp import StdioServerParameters
-from tool.registry import RegisteredTool, ToolRegistry
-from tool.tools import markdown, pdf
+from tool.service import RegisteredTool, ToolService
+from tool.tools.local import markdown, pdf
 
 from shared.types import ToolDefinition
 
@@ -33,7 +33,7 @@ def _make_definition(name: str = "echo") -> ToolDefinition:
 
 
 def test_register_local_makes_tool_visible_in_get_tools() -> None:
-    registry = ToolRegistry()
+    registry = ToolService()
     registry.register_local(_make_definition(), _echo)
 
     names = [tool.name for tool in registry.get_tools()]
@@ -43,7 +43,7 @@ def test_register_local_makes_tool_visible_in_get_tools() -> None:
 
 def test_register_local_returns_the_registry_for_chaining() -> None:
     """Local registrations can be composed fluently at the app boundary."""
-    registry = ToolRegistry()
+    registry = ToolService()
 
     returned_registry = registry.register_local(_make_definition(), _echo)
 
@@ -54,7 +54,7 @@ async def test_register_mcp_returns_the_registry_for_chaining(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """MCP registrations return the registry after their awaited I/O step."""
-    from tool.mcp.adapter import McpServerAdapter
+    from tool.tools.mcp.adapter import McpServerAdapter
 
     registered_tool = RegisteredTool(definition=_make_definition(), handler=_echo)
 
@@ -70,7 +70,7 @@ async def test_register_mcp_returns_the_registry_for_chaining(
         return FakeAdapter()
 
     monkeypatch.setattr(McpServerAdapter, "connect", fake_connect)
-    registry = ToolRegistry()
+    registry = ToolService()
     server_params = StdioServerParameters(command="fake-server")
 
     async with AsyncExitStack() as exit_stack:
@@ -81,7 +81,7 @@ async def test_register_mcp_returns_the_registry_for_chaining(
 
 
 async def test_call_tool_invokes_the_registered_handler() -> None:
-    registry = ToolRegistry()
+    registry = ToolService()
     registry.register_local(_make_definition(), _echo)
 
     result = await registry.call_tool("echo", {"message": "hi"})
@@ -92,7 +92,7 @@ async def test_call_tool_invokes_the_registered_handler() -> None:
 
 
 async def test_call_tool_returns_is_error_for_unknown_tool_name() -> None:
-    registry = ToolRegistry()
+    registry = ToolService()
 
     result = await registry.call_tool("does_not_exist", {})
 
@@ -101,7 +101,7 @@ async def test_call_tool_returns_is_error_for_unknown_tool_name() -> None:
 
 
 async def test_call_tool_returns_is_error_when_handler_raises() -> None:
-    registry = ToolRegistry()
+    registry = ToolService()
     registry.register_local(_make_definition(name="boom"), _boom)
 
     result = await registry.call_tool("boom", {})
@@ -112,7 +112,7 @@ async def test_call_tool_returns_is_error_when_handler_raises() -> None:
 
 
 def test_register_local_replaces_existing_tool_with_same_name() -> None:
-    registry = ToolRegistry()
+    registry = ToolService()
     registry.register_local(_make_definition(), _echo)
     registry.register_local(_make_definition(), _echo)  # same name - should replace
 
@@ -120,7 +120,7 @@ def test_register_local_replaces_existing_tool_with_same_name() -> None:
 
 
 async def test_register_local_makes_a_real_tool_file_callable() -> None:
-    registry = ToolRegistry()
+    registry = ToolService()
     registry.register_local(pdf.DEFINITION, pdf.extract_pdf)
     registry.register_local(pdf.GENERATE_DEFINITION, pdf.generate_pdf)
     registry.register_local(pdf.EDIT_DEFINITION, pdf.edit_pdf)

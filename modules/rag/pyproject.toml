@@ -1,16 +1,17 @@
 [project]
 name = "rag"
 version = "0.1.0"
-description = "Retrieval-augmented generation: ingestion and retrieval against a vector store, plus its HTTP surface."
+description = "Retrieval-augmented generation: ingestion/retrieval against a vector store, plus the user-scoped document-library HTTP surface."
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.9",
     "fastapi>=0.115",
     "python-multipart>=0.0.32",
+    "authentication",
 ]
 
-# `shared` is importable via the workspace's single environment - see
-# modules/agent/pyproject.toml for the same note.
+# `shared` and `infrastructure` are importable via the workspace's single
+# environment - see modules/agent/pyproject.toml for the same note.
 
 [build-system]
 requires = ["hatchling"]

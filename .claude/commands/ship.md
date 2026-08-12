@@ -15,7 +15,7 @@ working - this command's job is landing them, not writing them. If
    - `!git branch --show-current`
    - If on `main` (or another shared/protected branch), create a feature
      branch first: `git checkout -b <type>/<short-description>` (e.g.
-     `feat/rag-reranker`, `fix/chunk-overlap`) - pick `<type>` the same
+     `feat/rag-retrieval`, `fix/chunk-overlap`) - pick `<type>` the same
      way commit prefixes are chosen in step 2. Never commit directly to
      `main`.
    - Already on a feature branch with these changes in progress? Stay on

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,10 +20,3 @@ class AuthenticationError(Exception):
 
 class AuthenticationUnavailableError(Exception):
     """Token verification could not reach its configured trust source."""
-
-
-class Authenticator(Protocol):
-    """Authenticate an optional bearer token and return its trusted subject."""
-
-    async def authenticate(self, token: str | None) -> AuthenticatedUser:
-        """Verify ``token`` and return its provider-issued user identity."""

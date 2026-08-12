@@ -2,33 +2,33 @@
 
 from __future__ import annotations
 
-from agent.definitions import AgentDefinitionService
+from agent.service import AgentService
 
-from shared.types import AgentDefinition, ModelCatalogSnapshot, ToolDefinition
+from shared.types import Agent, ModelCatalogSnapshot, ToolDefinition
 
 
 class FakeRepository:
     """In-memory repository enforcing the same owner/id lookup semantics."""
 
     def __init__(self) -> None:
-        self.definitions: dict[str, AgentDefinition] = {}
+        self.definitions: dict[str, Agent] = {}
 
-    async def create(self, definition: AgentDefinition) -> AgentDefinition:
+    async def create(self, definition: Agent) -> Agent:
         self.definitions[definition.id] = definition
         return definition
 
-    async def get(self, owner_id: str, agent_id: str) -> AgentDefinition | None:
+    async def get(self, owner_id: str, agent_id: str) -> Agent | None:
         definition = self.definitions.get(agent_id)
         return definition if definition and definition.owner_id == owner_id else None
 
-    async def list(self, owner_id: str) -> list[AgentDefinition]:
+    async def list(self, owner_id: str) -> list[Agent]:
         return [
             definition
             for definition in self.definitions.values()
             if definition.owner_id == owner_id
         ]
 
-    async def save(self, definition: AgentDefinition) -> bool:
+    async def save(self, definition: Agent) -> bool:
         if await self.get(definition.owner_id, definition.id) is None:
             return False
         self.definitions[definition.id] = definition
@@ -62,9 +62,9 @@ class FakeModelCatalog:
         return self._snapshot
 
 
-def _service(model_catalog: FakeModelCatalog | None = None) -> AgentDefinitionService:
+def _service(model_catalog: FakeModelCatalog | None = None) -> AgentService:
     """Build the service with isolated in-memory dependencies."""
-    return AgentDefinitionService(
+    return AgentService(
         repository=FakeRepository(),
         tool_registry=FakeToolRegistry(),
         model_catalog=model_catalog,
