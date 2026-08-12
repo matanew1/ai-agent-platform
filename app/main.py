@@ -48,18 +48,23 @@ from shared.types import PlatformError
 # _require_content). override=False everywhere below so a real exported
 # env var always wins over any file.
 #
-# Which template loads is picked by APP_ENV - but that has to already be a
-# real (shell/platform-exported) environment variable to make the choice,
-# since it's normally *set inside* the file being chosen here; see
-# AUTHENTICATION.md. .env.prod when a deploy has exported APP_ENV=
-# production (the normal case: a hosting platform sets config vars
-# directly, not via a committed file), .env.dev otherwise - both are
-# tracked templates with placeholder secrets, safe to commit. A plain
-# .env, if present, loads last as a local-only override layer (gitignored)
-# for real secrets/one-off tweaks without editing a tracked file.
+# A plain .env, if present, loads FIRST - it's the local-only override
+# layer (gitignored) for real secrets, and load_dotenv(override=False)
+# means whichever load call sets a key first wins for the rest of the
+# process; loading it after the template below would make the template's
+# placeholder values permanently block .env's real ones for every key
+# they share, silently.
+#
+# Which template fills in anything still unset is picked by APP_ENV, which
+# by this point may already be set either from a real shell/platform-
+# exported variable or from .env itself (both loaded above) - see
+# AUTHENTICATION.md. .env.prod for APP_ENV=production (the normal
+# production case is a hosting platform exporting config vars directly,
+# with no .env file at all), .env.dev otherwise - both are tracked
+# templates with placeholder secrets, safe to commit.
+load_dotenv(override=False)
 _env_file = ".env.prod" if os.getenv("APP_ENV", "").strip().lower() == "production" else ".env.dev"
 load_dotenv(_env_file, override=False)
-load_dotenv(override=False)
 
 # First thing that runs after the environment is loaded, before any other
 # module logs anything - see shared/logging.py.
