@@ -1,11 +1,12 @@
 [project]
 name = "authentication"
 version = "0.1.0"
-description = "Bearer JWT authentication: the verified-caller FastAPI dependency and its JWKS/development implementations."
+description = "Backend-owned WorkOS AuthKit session-cookie authentication: the /auth/* routes, the verified-caller FastAPI dependency, and its WorkOS/development implementations."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
-    "pyjwt[crypto]>=2.10,<3",
+    "pydantic>=2.9",
+    "workos>=10.1,<11",
 ]
 
 # `shared` (AuthenticatedUser, AuthenticationError) is importable via the

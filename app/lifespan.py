@@ -4,7 +4,7 @@ logic.
 Builds ``infrastructure`` adapters and module services **once, per
 process** - this function runs exactly once (FastAPI calls it once per
 app lifetime, not per request) - and attaches them to ``app.state`` so
-route handlers never construct services themselves. Every infrastructure
+route handlers never construct a service themselves. Every infrastructure
 connection below must never happen per chat call, only once here. See
 ``.claude/rules/architecture.md`` (dependency injection). One deliberate
 exception to "once, here": ``chat.factory.AgentRuntimeFactory`` (built
@@ -28,7 +28,7 @@ from agent.repository import AgentRepository
 from agent.service import AgentService
 from artifact.repository import ArtifactRepository
 from artifact.service import ArtifactService
-from authentication.repository import build_authenticator_from_env
+from authentication.repository import AuthSettings, build_authenticator_from_env
 from chat.factory import AgentRuntimeFactory
 from fastapi import FastAPI
 from rag.repository import RagRepository
@@ -114,6 +114,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # SECTION 1 - Build infrastructure adapters. Construction only: the
     # and the LLM provider connect lazily on first use, so there's nothing
     # to await for them yet.
+    # Parsed twice (here and again inside build_authenticator_from_env) on
+    # purpose rather than threading one result through: both calls are pure,
+    # cheap env-var parsing, not I/O, and app.state needs the settings
+    # object itself (cookie policy, redirect targets - see
+    # authentication.controller) as well as the authenticator built from it.
+    auth_settings = AuthSettings.from_environment()
     authenticator = build_authenticator_from_env()
     database = PostgresDatabase(
         os.getenv(
@@ -211,6 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # .claude/rules/architecture.md (dependency injection).
         app.state.tool_registry = tool_registry
         app.state.authenticator = authenticator
+        app.state.auth_settings = auth_settings
         app.state.artifact_service = artifact_service
         app.state.rag_service = rag_service
         app.state.session_memory = memory

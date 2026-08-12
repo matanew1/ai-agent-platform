@@ -21,6 +21,7 @@ import uvicorn
 from agent.controller import router as agents_router
 from artifact.controller import router as artifacts_router
 from authentication.controller import get_current_user
+from authentication.controller import router as auth_router
 from chat.controller import router as chat_router
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
@@ -59,18 +60,25 @@ app = FastAPI(title="ai-agent-platform", lifespan=lifespan)
 # cross-origin - e.g. a frontend hosted on a different domain during local
 # development. Without this middleware, every browser request from such an
 # origin fails with a CORS error before it ever reaches a route handler.
-# "*" (the default) allows any origin; allow_credentials stays False to
-# keep that default spec-compliant - browsers reject Access-Control-Allow-
-# Credentials: true paired with a wildcard Access-Control-Allow-Origin. Set
-# APP_CORS_ORIGINS to a real allowlist (and allow_credentials=True below,
-# if needed) once this API is called with cookies/credentials.
+# allow_credentials=True because authentication.controller now issues a
+# session *cookie* (see authentication/repository.py's cookie_policy) -
+# every route that reads it depends on the browser being allowed to send
+# credentialed cross-origin requests. That makes the allowlist load-bearing
+# in a way it wasn't before: NEVER set APP_CORS_ORIGINS=* here again.
+# Starlette's CORSMiddleware reflects the literal request Origin instead of
+# a wildcard whenever allow_credentials=True (verified against its source),
+# so "*" would let any website make cookie-authenticated requests on a
+# signed-in user's behalf - there was no ambient credential to steal before,
+# there is now.
 _cors_origins = [
-    origin.strip() for origin in os.getenv("APP_CORS_ORIGINS", "*").split(",") if origin.strip()
+    origin.strip()
+    for origin in os.getenv("APP_CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=[
@@ -85,6 +93,7 @@ app.add_exception_handler(AgentError, handle_agent_error)
 app.add_exception_handler(PlatformError, handle_platform_error)
 app.add_exception_handler(NotImplementedError, handle_not_implemented)
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(agents_router)
 app.include_router(chat_router)
 app.include_router(documents_router)
