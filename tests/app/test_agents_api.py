@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from agent.controller import router
 from agent.service import AgentService
+from authentication.repository import SESSION_COOKIE_NAME, SessionResult
 from chat.controller import router as chat_router
 from chat.service import ChatStreamMetadata
 from fastapi import FastAPI
@@ -167,12 +168,14 @@ class _RuntimeFactory:
 
 
 class _Authenticator:
-    """Treat the test bearer token as the provider-issued subject."""
+    """Treat the test session-cookie value as the provider-issued subject."""
 
-    async def authenticate(self, token: str | None) -> AuthenticatedUser:
-        if token is None:
-            raise AuthenticationError("A bearer access token is required.")
-        return AuthenticatedUser(id=token)
+    async def authenticate_session(self, sealed_session: str | None) -> SessionResult:
+        if sealed_session is None:
+            raise AuthenticationError("No session cookie was provided.")
+        return SessionResult(
+            user=AuthenticatedUser(id=sealed_session), sealed_session=sealed_session
+        )
 
 
 class _ArtifactService:
@@ -209,11 +212,11 @@ def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, 
     app.include_router(chat_router)
     app.include_router(documents_router)
     app.include_router(models_router)
-    headers = {"Authorization": "Bearer owner-1"} if authenticated else None
-    return TestClient(app, headers=headers), document_index, agent_service
+    cookies = {SESSION_COOKIE_NAME: "owner-1"} if authenticated else None
+    return TestClient(app, cookies=cookies), document_index, agent_service
 
 
-def test_agent_routes_require_bearer_token_and_reject_caller_owner_id() -> None:
+def test_agent_routes_require_session_cookie_and_reject_caller_owner_id() -> None:
     unauthenticated_client, *_ = _client(authenticated=False)
     client, *_ = _client()
 
@@ -229,11 +232,10 @@ def test_agent_routes_require_bearer_token_and_reject_caller_owner_id() -> None:
     listed = client.get("/agents")
     another_users_list = client.get(
         "/agents",
-        headers={"Authorization": "Bearer owner-2"},
+        cookies={SESSION_COOKIE_NAME: "owner-2"},
     )
 
     assert missing_token.status_code == 401
-    assert missing_token.headers["www-authenticate"] == "Bearer"
     assert caller_owned.status_code == 422
     assert created.status_code == 201
     assert listed.status_code == 200
@@ -241,12 +243,12 @@ def test_agent_routes_require_bearer_token_and_reject_caller_owner_id() -> None:
     assert another_users_list.json() == []
 
 
-def test_openapi_has_bearer_security_and_no_public_owner_id_parameter() -> None:
+def test_openapi_has_session_cookie_security_and_no_public_owner_id_parameter() -> None:
     schema = _client()[0].app.openapi()
 
     create_schema = schema["components"]["schemas"]["CreateAgentRequest"]
     assert "owner_id" not in create_schema["properties"]
-    assert schema["paths"]["/agents"]["get"]["security"] == [{"ProviderBearer": []}]
+    assert schema["paths"]["/agents"]["get"]["security"] == [{"SessionCookie": []}]
     for path, methods in schema["paths"].items():
         if not (path.startswith("/agents") or path.startswith("/documents")):
             continue
@@ -402,7 +404,7 @@ def test_session_routes_return_client_ids_and_history_with_owner_agent_isolation
     fetched = client.get(f"/agents/{agent_id}/sessions/session/client-id")
     wrong_owner = client.get(
         f"/agents/{agent_id}/sessions",
-        headers={"Authorization": "Bearer owner-2"},
+        cookies={SESSION_COOKIE_NAME: "owner-2"},
     )
 
     expected = {
@@ -479,9 +481,9 @@ def test_swagger_exposes_only_the_public_agents_surface() -> None:
     assert "/models" in schema["paths"]
     assert "/agents/{agent_id}/chat" not in schema["paths"]
     assert "/agents/{agent_id}/chat/stream" in schema["paths"]
-    assert schema["paths"]["/models"]["get"]["security"] == [{"ProviderBearer": []}]
-    assert schema["paths"]["/tools"]["get"]["security"] == [{"ProviderBearer": []}]
-    assert schema["paths"]["/tools/{name}"]["post"]["security"] == [{"ProviderBearer": []}]
+    assert schema["paths"]["/models"]["get"]["security"] == [{"SessionCookie": []}]
+    assert schema["paths"]["/tools"]["get"]["security"] == [{"SessionCookie": []}]
+    assert schema["paths"]["/tools/{name}"]["post"]["security"] == [{"SessionCookie": []}]
 
 
 def test_chat_stream_extracts_and_forwards_attached_files() -> None:

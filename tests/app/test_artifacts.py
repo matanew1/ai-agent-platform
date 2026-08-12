@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from artifact.controller import router
 from artifact.service import ArtifactService
+from authentication.repository import SESSION_COOKIE_NAME, SessionResult
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
@@ -16,10 +17,14 @@ from shared.types import ArtifactReference
 
 
 class _Authenticator:
-    async def authenticate(self, token: str | None) -> AuthenticatedUser:
-        if token is None:
-            raise AuthenticationError("A bearer access token is required.")
-        return AuthenticatedUser(id=token)
+    """Treat the test session-cookie value as the provider-issued subject."""
+
+    async def authenticate_session(self, sealed_session: str | None) -> SessionResult:
+        if sealed_session is None:
+            raise AuthenticationError("No session cookie was provided.")
+        return SessionResult(
+            user=AuthenticatedUser(id=sealed_session), sealed_session=sealed_session
+        )
 
 
 class _FakeRepository:
@@ -59,16 +64,16 @@ async def test_generated_artifact_download_is_authenticated_and_owner_scoped() -
     client = TestClient(test_app)
     response = client.get(
         result["download_url"],
-        headers={"Authorization": "Bearer user-1"},
+        cookies={SESSION_COOKIE_NAME: "user-1"},
     )
     another_user = client.get(
         result["download_url"],
-        headers={"Authorization": "Bearer user-2"},
+        cookies={SESSION_COOKIE_NAME: "user-2"},
     )
     unauthenticated = client.get(result["download_url"])
     write_attempt = client.post(
         result["download_url"],
-        headers={"Authorization": "Bearer user-1"},
+        cookies={SESSION_COOKIE_NAME: "user-1"},
         content="replacement",
     )
 
