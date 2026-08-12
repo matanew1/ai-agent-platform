@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.8.0](https://github.com/matanew1/ai-agent-platform/compare/v0.7.2...v0.8.0) (2026-08-12)
+
+
+### Added
+
+* **tool:** add analyze_ats_compatibility, a local ATS resume-parsing tool ([9861d8f](https://github.com/matanew1/ai-agent-platform/commit/9861d8f78cac267b66a885bbae6158ac46dc5765))
+
 ### [0.7.2](https://github.com/matanew1/ai-agent-platform/compare/v0.7.1...v0.7.2) (2026-08-12)
 
 
