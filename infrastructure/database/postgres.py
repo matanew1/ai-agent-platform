@@ -28,11 +28,19 @@ class PostgresDatabase:
         self.session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
     async def connect(self) -> None:
-        """Verify PostgreSQL availability during application startup."""
+        """Verify PostgreSQL availability during application startup.
+
+        Disposes the pool on failure - the engine is created eagerly in
+        __init__, so a caller that retries connect() (e.g. a startup
+        health-check loop) after a transient outage would otherwise leak
+        the failed attempt's pooled connections. Matches the close-on-
+        failure behavior the MongoDB adapter this replaced had.
+        """
         try:
             async with self._engine.connect() as connection:
                 await connection.execute(text("SELECT 1"))
         except Exception as exc:
+            await self._engine.dispose()
             raise DatabaseError(f"Failed to connect to PostgreSQL: {exc}") from exc
         logger.debug("PostgreSQL connection pool is ready")
 

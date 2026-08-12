@@ -60,3 +60,5 @@ async def test_connect_translates_postgresql_failures(monkeypatch: pytest.Monkey
 
     with pytest.raises(DatabaseError, match="Failed to connect to PostgreSQL"):
         await database.connect()
+
+    assert engine.disposed is True

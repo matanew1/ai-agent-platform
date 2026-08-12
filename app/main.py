@@ -126,6 +126,9 @@ def run() -> None:
             "modules/artifact/src",
             "modules/authentication/src",
             "modules/model/src",
+            "modules/chat/src",
+            "modules/graph/src",
+            "modules/session/src",
         ],
     )
 
