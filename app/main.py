@@ -38,14 +38,27 @@ from shared.logging import configure_logging
 from shared.types import PlatformError
 
 # Before anything reads os.getenv - which is everything below, plus every
-# default in app/lifespan.py. Without this, .env is inert: `uv run app`
-# doesn't load it, so OLLAMA_REASONING and every other setting would
-# silently fell back to code defaults no matter what .env said. That was a
-# real bug, not a theoretical one: OLLAMA_REASONING=false never applied, so
-# qwen3 kept its default thinking mode on and consumed the whole
-# _TOOL_CALL_MAX_TOKENS budget on reasoning tokens, making every tool call
-# silently vanish (see infrastructure.llm.ollama's _require_content).
-# override=False so a real exported env var still wins over the file.
+# default in app/lifespan.py. Without this, env files are inert: `uv run
+# app` doesn't load them itself, so OLLAMA_REASONING and every other
+# setting would silently fall back to code defaults no matter what a file
+# said. That was a real bug, not a theoretical one: OLLAMA_REASONING=false
+# never applied, so qwen3 kept its default thinking mode on and consumed
+# the whole _TOOL_CALL_MAX_TOKENS budget on reasoning tokens, making every
+# tool call silently vanish (see infrastructure.llm.ollama's
+# _require_content). override=False everywhere below so a real exported
+# env var always wins over any file.
+#
+# Which template loads is picked by APP_ENV - but that has to already be a
+# real (shell/platform-exported) environment variable to make the choice,
+# since it's normally *set inside* the file being chosen here; see
+# AUTHENTICATION.md. .env.prod when a deploy has exported APP_ENV=
+# production (the normal case: a hosting platform sets config vars
+# directly, not via a committed file), .env.dev otherwise - both are
+# tracked templates with placeholder secrets, safe to commit. A plain
+# .env, if present, loads last as a local-only override layer (gitignored)
+# for real secrets/one-off tweaks without editing a tracked file.
+_env_file = ".env.prod" if os.getenv("APP_ENV", "").strip().lower() == "production" else ".env.dev"
+load_dotenv(_env_file, override=False)
 load_dotenv(override=False)
 
 # First thing that runs after the environment is loaded, before any other
