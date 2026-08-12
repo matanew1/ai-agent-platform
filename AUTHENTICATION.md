@@ -34,12 +34,17 @@ Browser <--302 (session cookie set)-- Backend <--GET /auth/callback?code=...-- W
 | `AUTH_FRONTEND_URL` | `http://localhost:5173` | `https://app.yourdomain.com` |
 | `APP_CORS_ORIGINS` | `http://localhost:5173` | Your real frontend origin(s) - never `*` |
 
-Copy the matching template and fill in the blanks:
+`.env.dev` and `.env.prod` are the real per-environment config files -
+each gitignored, holding real secrets, loaded directly by `app/main.py`
+based on `APP_ENV` (no separate `.env` layer). `.env.example` is the one
+committed reference template - copy it to start either file:
 
 ```bash
-cp .env.dev .env      # local development
-# or, on your hosting platform, set .env.prod's variables directly
-# (don't ship .env.prod itself - it's a template, not a secrets file)
+cp .env.example .env.dev    # fill in real Sandbox/Development values
+cp .env.example .env.prod   # fill in real Production values, or set
+                             # these as real env vars on your hosting
+                             # platform instead (don't ship .env.prod
+                             # itself if you do)
 ```
 
 ### Why `APP_ENV` matters beyond just a label
@@ -49,7 +54,7 @@ reads it to decide two concrete things:
 
 1. **Whether `AUTH_REDIRECT_URI` must be `https://`.** Startup fails closed
    (`RuntimeError`) if it isn't, outside `APP_ENV=development` - this is the
-   exact error you'll hit if `.env` still says `APP_ENV=production` while
+   exact error you'll hit if `.env.dev`/`.env.prod` still says `APP_ENV=production` while
    `AUTH_REDIRECT_URI` points at `http://localhost:8000`.
 2. **Cookie flags** (`cookie_policy()` in the same file):
 
@@ -104,8 +109,9 @@ refuses to activate under any other `APP_ENV`.
   development`** - `APP_ENV` isn't `development` but `AUTH_REDIRECT_URI` is
   `http://`. Either set `APP_ENV=development` for local work, or switch to
   a real `https://` URL for anything else. Check for a stray `APP_ENV`
-  *exported* in your shell (`echo $APP_ENV`) overriding `.env` - real
-  environment variables always win over `.env` (`load_dotenv(override=False)`).
+  *exported* in your shell (`echo $APP_ENV`) overriding `.env.dev`/`.env.prod` - real
+  environment variables always win over `.env.dev`/`.env.prod`
+  (`load_dotenv(override=False)`).
 - **Redirected to WorkOS, then back with `?auth_error=1`** - almost always
   a Dashboard mismatch: `AUTH_REDIRECT_URI` isn't registered under
   Redirects, or you're using Sandbox credentials against a Production

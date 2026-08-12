@@ -183,7 +183,7 @@ requirements), WorkOS Dashboard configuration, and a troubleshooting section
 for the errors you'll actually hit. Quick start:
 
 ```bash
-cp .env.dev .env   # or .env.prod's variables, on a real deployment
+cp .env.example .env.dev   # fill in real values; loaded automatically by APP_ENV
 ```
 
 The agent, document, session, streaming-chat, model-catalog, and
