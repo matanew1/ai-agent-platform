@@ -36,7 +36,7 @@ from rag.service import RAGService
 from session.repository import SessionRepository
 from session.service import HybridSessionStore
 from tool.service import ToolService
-from tool.tools.local import markdown, pdf
+from tool.tools.local import ats, markdown, pdf
 from tool.tools.mcp.config import load_servers
 
 from infrastructure.cache.redis import RedisCache
@@ -177,6 +177,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 markdown.EDIT_DEFINITION,
                 partial(markdown.edit_markdown, artifact_service=artifact_service),
             )
+            .register_local(ats.DEFINITION, ats.analyze_ats_compatibility)
         )
 
         # SECTION 3B - Register every external MCP server declared in
