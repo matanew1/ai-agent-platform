@@ -12,6 +12,27 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.7.0](https://github.com/matanew1/ai-agent-platform/compare/v0.6.0...v0.7.0) (2026-08-12)
+
+
+### Changed
+
+* **infrastructure:** migrate persistence to PostgreSQL, reorganize capability adapters ([bf430da](https://github.com/matanew1/ai-agent-platform/commit/bf430da82678d3df713024d93d145b4076610ce4))
+* **modules:** split agent into agent/chat/graph/session, extract artifact/authentication/model ([21df40a](https://github.com/matanew1/ai-agent-platform/commit/21df40a1f3b1e2d32581ce3be8224a29e9d37319))
+
+
+### Added
+
+* **app:** wire the WorkOS session-cookie authenticator into the composition root ([d97a4de](https://github.com/matanew1/ai-agent-platform/commit/d97a4de10df0cc08c0bdf42bcef3a15dbfb88d86))
+* **authentication:** add /auth/login, /auth/callback, /auth/logout, /auth/me routes ([a86bd1a](https://github.com/matanew1/ai-agent-platform/commit/a86bd1aa91c4aafbb6a1c1c570dcf2d7311b3d3b))
+* **authentication:** implement WorkOS AuthKit vanilla session-cookie flow ([a4f4252](https://github.com/matanew1/ai-agent-platform/commit/a4f4252639df8793f013d2ca6213a575cb6f06ee))
+
+
+### Fixed
+
+* **authentication:** handle JWKS outages and empty user ids, dedupe callback error redirect ([4557e39](https://github.com/matanew1/ai-agent-platform/commit/4557e39d3c6080737aea02c94a13756525ed2710))
+* watch chat/graph/session for reload, dispose Postgres engine on failed connect ([c838b7f](https://github.com/matanew1/ai-agent-platform/commit/c838b7f6247c558be5074ae5184be1908c78a0c4))
+
 ## [0.6.0](https://github.com/matanew1/ai-agent-platform/compare/v0.5.1...v0.6.0) (2026-08-11)
 
 
