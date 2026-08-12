@@ -131,7 +131,7 @@ def _escape_xml(text: str) -> str:
 
 _LINK = re.compile(r"\[([^\]]+)\]\((\S+?)\)")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_ITALIC = re.compile(r"(?<!\*)\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\*)")
 _INLINE_CODE = re.compile(r"`([^`]+?)`")
 
 
@@ -268,6 +268,19 @@ def _build_text_pdf(text: str) -> bytes:
     return buffer.getvalue()
 
 
+def _build_text_pdf_and_count(text: str) -> tuple[bytes, int]:
+    """Render Markdown text into a PDF and report its page count.
+
+    Pagination depends on how flowables wrap, so the page count can only be
+    known after the document is built - re-parsing it with ``PdfReader`` is
+    itself non-trivial work, so it's done here, inside the same
+    ``asyncio.to_thread`` call as the build, rather than back on the event
+    loop.
+    """
+    content = _build_text_pdf(text)
+    return content, len(PdfReader(BytesIO(content)).pages)
+
+
 async def extract_pdf(path: str) -> dict[str, str]:
     """Extract text from a PDF file.
 
@@ -294,8 +307,7 @@ async def generate_pdf(
 ) -> dict[str, str | int]:
     """Generate a downloadable, Markdown-rendered PDF, stored through ``ArtifactService``."""
     logger.debug("generate_pdf: requested_filename=%r text_len=%d", path, len(text))
-    content = await asyncio.to_thread(_build_text_pdf, text)
-    pages = len(PdfReader(BytesIO(content)).pages)
+    content, pages = await asyncio.to_thread(_build_text_pdf_and_count, text)
     artifact = await artifact_service.store(
         content,
         requested_filename=path,
