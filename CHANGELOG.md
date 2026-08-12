@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.7.2](https://github.com/matanew1/ai-agent-platform/compare/v0.7.1...v0.7.2) (2026-08-12)
+
+
+### Fixed
+
+* add the missing initial Alembic migration ([fb0367b](https://github.com/matanew1/ai-agent-platform/commit/fb0367b356991d0e81ca7c681009c2369789acaa)), closes [#8](https://github.com/matanew1/ai-agent-platform/issues/8)
+
 ### [0.7.1](https://github.com/matanew1/ai-agent-platform/compare/v0.7.0...v0.7.1) (2026-08-12)
 
 
