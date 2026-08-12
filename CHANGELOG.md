@@ -12,6 +12,18 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.7.1](https://github.com/matanew1/ai-agent-platform/compare/v0.7.0...v0.7.1) (2026-08-12)
+
+
+### Documentation
+
+* **authentication:** add dev/prod env templates and auto-selecting env loading ([93e0553](https://github.com/matanew1/ai-agent-platform/commit/93e0553bf941466e66e6d42e19f5265c86611318))
+
+
+### Fixed
+
+* load .env before templates so local overrides actually take effect ([3d067d9](https://github.com/matanew1/ai-agent-platform/commit/3d067d9057e622d378ed29f82ca731b3dbf30bf4))
+
 ## [0.7.0](https://github.com/matanew1/ai-agent-platform/compare/v0.6.0...v0.7.0) (2026-08-12)
 
 

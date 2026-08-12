@@ -46,7 +46,7 @@ requires-dist = [
 
 [[package]]
 name = "ai-agent-platform"
-version = "0.7.0"
+version = "0.7.1"
 source = { editable = "." }
 dependencies = [
     { name = "agent" },
