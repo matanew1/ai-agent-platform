@@ -158,56 +158,39 @@ via `ArtifactService` (`modules/artifact`) - not on local disk, so a
 horizontally scaled deployment needs no shared storage - choose a
 collision-free sanitized filename, and return a read-only
 `/artifacts/<filename>` download URL. A separate table records the verified
-owner before that URL is returned, and downloads require the same bearer
-identity; another authenticated user receives 404. Editing is copy-on-write:
+owner before that URL is returned, and downloads require the same
+authenticated identity; another authenticated user receives 404. Editing is copy-on-write:
 it accepts that URL or its safe filename and never changes the source
 artifact. Tool callers may suggest an output filename but cannot choose its
 stored name outright (a collision still gets a unique suffix).
 
 ### Authentication and user management
 
-[WorkOS AuthKit](https://workos.com/docs/authkit) is the recommended managed
-identity provider. Its [free tier](https://workos.com/pricing) currently covers
-one million monthly active users and includes hosted sign-in/sign-up, social
-auth, MFA, and RBAC. The integration stays standards-based rather than
-backend-SDK-coupled: the frontend sends a short-lived access-token JWT and this
-API verifies its signature against the provider's
-[JWKS](https://workos.com/docs/authkit/sessions), plus its issuer, audience,
-expiration, and subject claims.
+[WorkOS AuthKit](https://workos.com/docs/authkit) is the identity provider,
+via its own ["vanilla" backend flow](https://workos.com/docs/authkit/vanilla/python)
+rather than a client-side SDK: `modules/authentication` owns the whole OAuth
+round-trip (`GET /auth/login` → WorkOS hosted sign-in → `GET /auth/callback`)
+and hands the frontend an `httponly` session cookie. There's no bearer token
+and no WorkOS-facing code in the frontend at all - it only calls this
+backend's `/auth/*` routes and sends cookies. The verified session's user id
+is the only source of user ownership; `owner_id` is never part of a request
+body or query contract, and PostgreSQL/Qdrant/Redis's internal `owner_id`
+partition key is always that authenticated id.
 
-Create a WorkOS application, copy its client ID, and configure:
-
-```bash
-AUTH_MODE=jwt
-AUTH_PROVIDER=workos
-AUTH_ISSUER=https://api.workos.com
-AUTH_AUDIENCE=client_YOUR_CLIENT_ID
-AUTH_JWKS_URL=https://api.workos.com/sso/jwks/client_YOUR_CLIENT_ID
-AUTH_JWT_ALGORITHMS=RS256
-```
-
-No WorkOS API secret is needed by this API. Protected requests require
-`Authorization: Bearer <access_token>`. The verified JWT `sub` claim is the
-only source of user ownership; `owner_id` is no longer part of the request
-body or query contract and any caller-supplied value is never trusted.
-PostgreSQL/Qdrant/Redis still use an internal
-`owner_id` field as a storage partition key, but its value is now always the
-authenticated provider user ID.
-
-WorkOS tokens may identify the target application with either standard `aud`
-or AuthKit's `client_id`; the backend requires one of them to exactly match
-`AUTH_AUDIENCE`. The agent, document, session, streaming-chat, model-catalog,
-and tool-registry routes all require authentication. `/health` stays public.
-
-Authentication fails closed when `AUTH_ISSUER` is missing. Local development
-has an explicit bypass, but both gates are required and it cannot be activated
-under the production environment:
+**See [AUTHENTICATION.md](AUTHENTICATION.md) for the full setup** - required
+environment variables, the dev-vs-prod differences (cookie flags, HTTPS
+requirements), WorkOS Dashboard configuration, and a troubleshooting section
+for the errors you'll actually hit. Quick start:
 
 ```bash
-APP_ENV=development
-AUTH_MODE=development
-AUTH_DEV_USER_ID=local-dev
+cp .env.dev .env   # or .env.prod's variables, on a real deployment
 ```
+
+The agent, document, session, streaming-chat, model-catalog, and
+tool-registry routes all require authentication (a valid session cookie).
+`/health` and every `/auth/*` route stay public. A local offline bypass
+(`AUTH_MODE=development`, no WorkOS Dashboard access needed) is also
+documented there.
 
 ### Multiple customizable agents
 
@@ -220,17 +203,21 @@ agents do not share conversation history. Document retrieval is scoped by the
 authenticated user alone (see below), so every agent belonging to one user
 draws on the same private document library.
 
-```bash
-# A WorkOS AuthKit access token obtained by the frontend after sign-in.
-ACCESS_TOKEN='eyJ...'
+Sessions are cookie-based now (see [AUTHENTICATION.md](AUTHENTICATION.md)),
+which makes a portable `curl` example awkward without a real browser -
+these examples assume the local offline bypass
+(`AUTH_MODE=development`/`AUTH_DEV_USER_ID=local-dev`), which needs no
+cookie at all. Against a real WorkOS-backed deployment, sign in through a
+browser and copy the `wos_session` cookie value instead
+(`curl -b "wos_session=<value>" ...`).
 
+```bash
 # Discover the configured provider, selectable chat models, and temperature
 # bounds/default used by agent-configuration clients.
-curl http://localhost:8000/models -H "Authorization: Bearer $ACCESS_TOKEN"
+curl http://localhost:8000/models
 
 # Create a configurable agent.
 curl -X POST http://localhost:8000/agents \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"name":"Researcher",\
        "description":"Finds and cites reliable sources.",\
@@ -238,25 +225,21 @@ curl -X POST http://localhost:8000/agents \
        "allowed_tools":[],"model":"qwen3:8b","temperature":0.3}'
 
 # List the authenticated user's definitions, then use an id in the next calls.
-curl http://localhost:8000/agents -H "Authorization: Bearer $ACCESS_TOKEN"
+curl http://localhost:8000/agents
 
 # Index private context into this user's document library (below), then chat.
 curl -X POST http://localhost:8000/documents/text \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"source_id":"notes","text":"Project notes go here."}'
 
 curl --no-buffer -X POST http://localhost:8000/agents/AGENT_ID/chat/stream \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"session_id":"research-1","message":"What do the notes say?"}'
 
 # List that agent's retained sessions, including history and updated_at,
 # or fetch one by its original client-provided session id.
-curl http://localhost:8000/agents/AGENT_ID/sessions \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
-curl http://localhost:8000/agents/AGENT_ID/sessions/research-1 \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+curl http://localhost:8000/agents/AGENT_ID/sessions
+curl http://localhost:8000/agents/AGENT_ID/sessions/research-1
 ```
 
 `GET /models` returns
@@ -294,20 +277,18 @@ user retrieves from the same pool (see `agent.service.runtime
 tier.
 
 ```bash
+# Assumes AUTH_MODE=development, as above.
 curl -X POST http://localhost:8000/documents/text \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"source_id":"notes","text":"Project notes go here."}'
 
 curl -X POST http://localhost:8000/documents/file \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -F 'file=@./project-notes.pdf' \
   -F 'source_id=project-notes'
 
 # List sources aggregated from their indexed chunks, or delete one exact source.
-curl http://localhost:8000/documents -H "Authorization: Bearer $ACCESS_TOKEN"
-curl -X DELETE http://localhost:8000/documents/project-notes \
-  -H "Authorization: Bearer $ACCESS_TOKEN"
+curl http://localhost:8000/documents
+curl -X DELETE http://localhost:8000/documents/project-notes
 ```
 
 ```bash

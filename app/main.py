@@ -38,15 +38,33 @@ from shared.logging import configure_logging
 from shared.types import PlatformError
 
 # Before anything reads os.getenv - which is everything below, plus every
-# default in app/lifespan.py. Without this, .env is inert: `uv run app`
-# doesn't load it, so OLLAMA_REASONING and every other setting would
-# silently fell back to code defaults no matter what .env said. That was a
-# real bug, not a theoretical one: OLLAMA_REASONING=false never applied, so
-# qwen3 kept its default thinking mode on and consumed the whole
-# _TOOL_CALL_MAX_TOKENS budget on reasoning tokens, making every tool call
-# silently vanish (see infrastructure.llm.ollama's _require_content).
-# override=False so a real exported env var still wins over the file.
+# default in app/lifespan.py. Without this, env files are inert: `uv run
+# app` doesn't load them itself, so OLLAMA_REASONING and every other
+# setting would silently fall back to code defaults no matter what a file
+# said. That was a real bug, not a theoretical one: OLLAMA_REASONING=false
+# never applied, so qwen3 kept its default thinking mode on and consumed
+# the whole _TOOL_CALL_MAX_TOKENS budget on reasoning tokens, making every
+# tool call silently vanish (see infrastructure.llm.ollama's
+# _require_content). override=False everywhere below so a real exported
+# env var always wins over any file.
+#
+# A plain .env, if present, loads FIRST - it's the local-only override
+# layer (gitignored) for real secrets, and load_dotenv(override=False)
+# means whichever load call sets a key first wins for the rest of the
+# process; loading it after the template below would make the template's
+# placeholder values permanently block .env's real ones for every key
+# they share, silently.
+#
+# Which template fills in anything still unset is picked by APP_ENV, which
+# by this point may already be set either from a real shell/platform-
+# exported variable or from .env itself (both loaded above) - see
+# AUTHENTICATION.md. .env.prod for APP_ENV=production (the normal
+# production case is a hosting platform exporting config vars directly,
+# with no .env file at all), .env.dev otherwise - both are tracked
+# templates with placeholder secrets, safe to commit.
 load_dotenv(override=False)
+_env_file = ".env.prod" if os.getenv("APP_ENV", "").strip().lower() == "production" else ".env.dev"
+load_dotenv(_env_file, override=False)
 
 # First thing that runs after the environment is loaded, before any other
 # module logs anything - see shared/logging.py.
