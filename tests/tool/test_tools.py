@@ -142,6 +142,50 @@ async def test_generate_pdf_creates_a_downloadable_readable_pdf(
     )
 
 
+async def test_generate_pdf_renders_markdown_instead_of_literal_syntax(
+    artifact_service: ArtifactService,
+) -> None:
+    markdown_text = (
+        "# Jane Doe\n"
+        "\n"
+        "## Experience\n"
+        "\n"
+        "Led the **payments** migration and improved *reliability* 2015–2020.\n"
+        "\n"
+        "- Shipped the [agent platform](https://example.com) to 50+ teams.\n"
+        "- Mentored engineers.\n"
+        "\n"
+        "---\n"
+        "\n"
+        "See `README.md` for details.\n"
+    )
+
+    result = await generate_pdf(markdown_text, artifact_service, path="resume.pdf")
+
+    stored = _stored_bytes(artifact_service, result["filename"])
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(stored)).pages)
+
+    # The rendered content is present as plain words, not raw markdown
+    # source - a header/bold/bullet/link marker would mean it fell back to
+    # dumping the literal syntax onto the page (the bug being fixed here).
+    assert "Jane Doe" in text
+    assert "Experience" in text
+    assert "payments" in text
+    assert "reliability" in text
+    assert "agent platform" in text
+    assert "Shipped the" in text
+    assert "Mentored engineers." in text
+    assert "README.md" in text
+    assert "#" not in text
+    assert "**" not in text
+    assert "[agent platform]" not in text
+    assert "(https://example.com)" not in text
+    # The old hand-rolled writer's Latin-1-only encoding silently replaced
+    # anything outside that range (an en dash, here) with "?".
+    assert "2015–2020" in text
+    assert "?" not in text
+
+
 async def test_generate_pdf_uses_a_default_name_and_avoids_collisions(
     artifact_service: ArtifactService,
 ) -> None:

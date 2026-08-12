@@ -205,7 +205,7 @@ def _requested_artifact(input_text: str) -> tuple[str, str, str] | None:
     if not asks_to_create:
         return None
     if "pdf" in lowered or ".pdf" in lowered:
-        return ("generate_pdf", "text", "plain-text PDF")
+        return ("generate_pdf", "text", "Markdown-formatted PDF")
     if "markdown" in lowered or ".md" in lowered:
         return ("generate_markdown", "content", "Markdown")
     return None

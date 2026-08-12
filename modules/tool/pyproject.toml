@@ -8,6 +8,7 @@ dependencies = [
     "pydantic>=2.9",
     "pypdf>=5.0",
     "pyyaml>=6.0",
+    "reportlab>=4.2",
     "artifact",
 ]
 
