@@ -12,6 +12,18 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.9.0](https://github.com/matanew1/ai-agent-platform/compare/v0.8.0...v0.9.0) (2026-08-12)
+
+
+### Added
+
+* **tool:** render Markdown when generating PDFs instead of raw text ([7eafcae](https://github.com/matanew1/ai-agent-platform/commit/7eafcae9f648e9e6df8392c3ad77512de8d122aa))
+
+
+### Fixed
+
+* **tool:** tighten PDF Markdown rendering per review ([04b0ed3](https://github.com/matanew1/ai-agent-platform/commit/04b0ed3ecf56f4e17b6562a98d8088baff630e03)), closes [#14](https://github.com/matanew1/ai-agent-platform/issues/14)
+
 ## [0.8.0](https://github.com/matanew1/ai-agent-platform/compare/v0.7.2...v0.8.0) (2026-08-12)
 
 
