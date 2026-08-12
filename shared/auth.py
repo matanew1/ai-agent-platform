@@ -7,11 +7,12 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedUser:
-    """Identity established from a verified provider access token."""
+    """Identity established from a verified provider session."""
 
     id: str
     email: str | None = None
     display_name: str | None = None
+    avatar_url: str | None = None
 
 
 class AuthenticationError(Exception):
