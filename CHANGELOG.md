@@ -12,6 +12,18 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.11.0](https://github.com/matanew1/ai-agent-platform/compare/v0.10.0...v0.11.0) (2026-08-13)
+
+
+### Fixed
+
+* **authentication:** require current user on protected routes ([4c451eb](https://github.com/matanew1/ai-agent-platform/commit/4c451ebc292fdfd356a48f7c84864e773989b693))
+
+
+### Added
+
+* **chat:** expose retrieved sources and strengthen tool use ([5ddfef3](https://github.com/matanew1/ai-agent-platform/commit/5ddfef3511d91f06761d03c00e3094e01586e553))
+
 ## [0.10.0](https://github.com/matanew1/ai-agent-platform/compare/v0.9.0...v0.10.0) (2026-08-13)
 
 
