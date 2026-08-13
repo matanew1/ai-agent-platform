@@ -43,12 +43,19 @@ stage, commit, or discard unrelated work.
 1. Push the confirmed branch and create or update one PR against `main`.
    The PR body must have concise **Summary** and **Testing** sections with
    actual commands/results.
-2. Merge only after the requested review and green checks. Do not force-push,
-   rewrite shared history, or merge an unreviewed PR.
-3. After a confirmed merge to `main`, release with `npx standard-version`:
-   use `--dry-run` first, then choose `--release-as minor` only for a genuine
-   new capability below `1.0.0`; otherwise use the config default. It updates
-   `pyproject.toml` and `CHANGELOG.md` from conventional commits.
-4. Run `uv sync` after the release to update `uv.lock` if needed, include it
-   in the release commit, verify again on `main`, and push the commit and tag.
-   Report the PR URL, merge commit, version/tag, and verification results.
+2. Wait for every required PR check to finish green. If one fails, inspect it
+   and fix the branch before merging. Do not force-push, rewrite shared
+   history, or merge an unreviewed PR.
+3. Merge the confirmed PR with a merge commit and delete the remote branch.
+   Then switch to `main`, pull with `--ff-only`, and confirm the merge commit
+   is present before releasing.
+4. Run `npx standard-version --dry-run` first. Confirm the proposed version
+   and changelog sections. For a genuine new capability below `1.0.0`, use
+   `--release-as minor`; otherwise use the config default. Run the confirmed
+   command to update `pyproject.toml`, `CHANGELOG.md`, create the release
+   commit, and create its version tag.
+5. Run `uv sync` after the release to update `uv.lock` if needed. Amend the
+   release commit and force-move only the newly created local version tag to
+   that amended commit. Re-run verification on `main`, then push `main` and
+   the release tag. Report the PR URL, merge commit, version/tag, and
+   verification results.
