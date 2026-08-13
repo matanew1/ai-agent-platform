@@ -35,7 +35,7 @@ class FakeLLMProvider:
             return self._artifact_content
         return (
             json.dumps([self._tool_call])
-            if "Available tools:" in prompt and self._tool_call
+            if "Agent-enabled tools:" in prompt and self._tool_call
             else "[]"
         )
 
@@ -160,10 +160,11 @@ async def test_run_stream_returns_metadata_after_retrieval_and_tool_execution() 
     assert saved_answer.tools_invoked == ["echo"]
     assert saved_answer.chunks_retrieved == 1
     assert saved_answer.prep_time_seconds == metadata.prep_time_seconds
-    tool_prompt = next(prompt for prompt in llm.prompts if "Available tools:" in prompt)
+    tool_prompt = next(prompt for prompt in llm.prompts if "Agent-enabled tools:" in prompt)
     assert "Retrieved context:\n- a" in tool_prompt
     assert "MUST call it" in tool_prompt
-    assert "ATS/resume-analysis tool" in tool_prompt
+    assert "supplied document text" in tool_prompt
+    assert "intentionally enabled" in tool_prompt
     assert "Never invent, hallucinate" in tool_prompt
 
 
