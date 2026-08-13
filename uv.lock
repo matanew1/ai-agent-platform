@@ -16,6 +16,7 @@ members = [
     "chat",
     "graph",
     "model",
+    "platform-settings",
     "rag",
     "session",
     "tool",
@@ -62,6 +63,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "model" },
     { name = "ollama" },
+    { name = "platform-settings" },
     { name = "pydantic" },
     { name = "pypdf" },
     { name = "python-docx" },
@@ -97,6 +99,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.2" },
     { name = "model", editable = "modules/model" },
     { name = "ollama", specifier = ">=0.6" },
+    { name = "platform-settings", editable = "modules/settings" },
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pypdf", specifier = ">=6.15.0" },
     { name = "python-docx", specifier = ">=1.2.0" },
@@ -1463,6 +1466,23 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/18/f0/a5595c1e8c3ae44b9828cb2f0fa8155e5095ef04d6327b8f61cf44a3df85/pillow-12.3.0-cp315-cp315t-win32.whl", hash = "sha256:1657923d2d45afb66526e5b933e5b3052e6bdea196c90d3abb2424e18c77dae8", size = 6474384, upload-time = "2026-07-01T11:56:18.855Z" },
     { url = "https://files.pythonhosted.org/packages/e4/04/62bcd9f844984c5938d3b05264a61d797a29d3e0812341a8204af70bbdee/pillow-12.3.0-cp315-cp315t-win_amd64.whl", hash = "sha256:8cd2f7bdda092d99c9fc2fb7391354f306d01443d22785d0cbfafa2e2c8bb418", size = 7243537, upload-time = "2026-07-01T11:56:21.214Z" },
     { url = "https://files.pythonhosted.org/packages/3d/68/1f3066acedf37673694a7141381d8f811ae97f30d34413d236abe7d489f1/pillow-12.3.0-cp315-cp315t-win_arm64.whl", hash = "sha256:06ff022112bc9cbf83b60f8e028d94ad87b60621706487e65f673de61610ab59", size = 2567491, upload-time = "2026-07-01T11:56:23.506Z" },
+]
+
+[[package]]
+name = "platform-settings"
+version = "0.1.0"
+source = { editable = "modules/settings" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "pydantic" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "pydantic", specifier = ">=2.9" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
 ]
 
 [[package]]

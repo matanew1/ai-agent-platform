@@ -27,6 +27,7 @@ dependencies = [
     "graph",
     "chat",
     "session",
+    "platform-settings",
     "python-dotenv>=1.0",
     "alembic>=1.14",
 ]
@@ -57,6 +58,7 @@ model = { workspace = true }
 graph = { workspace = true }
 chat = { workspace = true }
 session = { workspace = true }
+platform-settings = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

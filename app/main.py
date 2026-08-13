@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from graph.graph import AgentError, handle_agent_error
 from model.controller import router as models_router
 from rag.controller import router as documents_router
+from settings.controller import router as settings_router
 from tool.controller import router as tool_router
 
 from app.health import router as health_router
@@ -111,6 +112,7 @@ app.include_router(auth_router)
 app.include_router(agents_router)
 app.include_router(chat_router)
 app.include_router(documents_router)
+app.include_router(settings_router)
 app.include_router(models_router, dependencies=[Depends(get_current_user)])
 # Tools can perform network and filesystem work, so the composition root
 # protects both registry reads and direct invocation without coupling the
@@ -152,6 +154,7 @@ def run() -> None:
             "modules/chat/src",
             "modules/graph/src",
             "modules/session/src",
+            "modules/settings/src",
         ],
     )
 
