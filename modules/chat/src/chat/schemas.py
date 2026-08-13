@@ -6,13 +6,12 @@ from pydantic import BaseModel, Field
 
 
 class ChatFileAttachment(BaseModel):
-    """One file attached to a single chat turn.
+    """One file attached to a chat turn.
 
     Base64 rather than multipart so ``/chat/stream`` keeps one request
     shape (JSON) whether or not a caller sends files - see
-    ``chat.controller``. Extracted and used for that turn's answer only,
-    never persisted; a caller who wants a file permanently searchable
-    should use ``rag.controller``'s document-ingestion routes instead.
+    ``chat.controller``. The server derives the authenticated owner and
+    selected agent, then indexes the extracted content for later retrieval.
     """
 
     filename: str

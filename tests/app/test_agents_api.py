@@ -486,8 +486,8 @@ def test_swagger_exposes_only_the_public_agents_surface() -> None:
     assert schema["paths"]["/tools/{name}"]["post"]["security"] == [{"SessionCookie": []}]
 
 
-def test_chat_stream_extracts_and_forwards_attached_files() -> None:
-    client, _, agent_service = _client()
+def test_chat_stream_indexes_attached_files_for_the_authenticated_user_and_agent() -> None:
+    client, document_index, agent_service = _client()
     client.post(
         "/agents",
         json={"name": "Researcher", "allowed_tools": []},
@@ -514,6 +514,14 @@ def test_chat_stream_extracts_and_forwards_attached_files() -> None:
     assert artifact_service.grants[0][0] == "owner-1"
     assert [artifact.filename for artifact in artifact_service.grants[0][1]] == ["profile.pdf"]
     assert agent_service.received_attachments == [("notes.txt", "attached plain text")]
+    assert response.headers["X-Indexed-Documents"]
+    assert document_index.ingested == [
+        {
+            "text": "attached plain text",
+            "source_id": f"owner-1:chat/{agent_id}/90d2815c287c6e57-notes.txt",
+            "metadata": {"owner_id": "owner-1", "agent_id": agent_id},
+        }
+    ]
 
 
 def test_chat_stream_rejects_invalid_base64_attachment() -> None:

@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
+from pathlib import PurePath
 
 from agent.service import AgentService
 from artifact.service import ArtifactService
@@ -27,6 +29,15 @@ from shared.documents import extract_document_text
 router = APIRouter(prefix="/agents", tags=["agents"])
 
 
+def _attachment_source_id(agent_id: str, filename: str, content: bytes) -> str:
+    """Create a stable, displayable source ID without trusting client ownership."""
+    safe_filename = PurePath(filename.replace("\\", "/")).name
+    safe_filename = "".join(character for character in safe_filename if character.isprintable())
+    safe_filename = safe_filename.strip(" .")[:120] or "upload"
+    digest = hashlib.sha256(content).hexdigest()[:16]
+    return f"chat/{agent_id}/{digest}-{safe_filename}"
+
+
 @router.post("/{agent_id}/chat/stream")
 async def stream_with_agent(
     agent_id: str,
@@ -36,10 +47,8 @@ async def stream_with_agent(
 ) -> StreamingResponse:
     """Stream a response from the caller's configured agent runtime.
 
-    ``payload.files``, if any, are extracted and folded into this turn's
-    answer only (see ``ChatService.run_stream``'s ``attachments``) - not
-    persisted. For documents that should be searchable in future turns,
-    use ``rag.controller``'s ingestion routes instead.
+    ``payload.files``, if any, are extracted, indexed in the authenticated
+    user's document library, and folded into this turn's answer prompt.
     """
     definitions: AgentService = request.app.state.agent_service
     definition = await definitions.get(current_user.id, agent_id)
@@ -70,6 +79,16 @@ async def stream_with_agent(
         (filename, text)
         for (filename, _content), text in zip(decoded_attachments, attachment_texts, strict=True)
     ]
+    document_library = request.app.state.rag_service
+    indexed_documents: list[dict[str, object]] = []
+    for (filename, content), text in zip(decoded_attachments, attachment_texts, strict=True):
+        source_id = _attachment_source_id(agent_id, filename, content)
+        chunks_indexed = await document_library.ingest_document(
+            text=text,
+            source_id=f"{current_user.id}:{source_id}",
+            metadata={"owner_id": current_user.id, "agent_id": agent_id},
+        )
+        indexed_documents.append({"source_id": source_id, "chunks_indexed": chunks_indexed})
     factory: AgentRuntimeFactory = request.app.state.agent_runtime_factory
     metadata, stream = await factory.get(definition).run_stream(
         session_id=f"{current_user.id}:{agent_id}:{payload.session_id}",
@@ -95,6 +114,7 @@ async def stream_with_agent(
             "X-Tools-Invoked": json.dumps(metadata.tools_invoked),
             "X-Chunks-Retrieved": str(metadata.chunks_retrieved),
             "X-Prep-Time-Seconds": f"{metadata.prep_time_seconds:.3f}",
+            "X-Indexed-Documents": json.dumps(indexed_documents),
             "X-Artifacts": json.dumps(
                 [artifact.model_dump(mode="json") for artifact in metadata.artifacts]
             ),
