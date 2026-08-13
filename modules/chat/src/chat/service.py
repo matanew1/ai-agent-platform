@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
@@ -20,7 +21,13 @@ from shared.prompt_formatters import (
     format_history,
     format_tool_results,
 )
-from shared.types import ArtifactReference, ChatMessage, SessionCheckpoint, ToolResult
+from shared.types import (
+    ArtifactReference,
+    ChatMessage,
+    RetrievedSource,
+    SessionCheckpoint,
+    ToolResult,
+)
 
 MAX_HISTORY_MESSAGES = 40
 
@@ -45,6 +52,7 @@ class ChatStreamMetadata:
     chunks_retrieved: int
     prep_time_seconds: float
     artifacts: list[ArtifactReference] = field(default_factory=list)
+    sources: list[RetrievedSource] = field(default_factory=list)
 
 
 def _artifact_references(tool_results: list[ToolResult]) -> list[ArtifactReference]:
@@ -58,6 +66,31 @@ def _artifact_references(tool_results: list[ToolResult]) -> list[ArtifactReferen
         if isinstance(filename, str) and isinstance(download_url, str):
             artifacts.append(ArtifactReference(filename=filename, download_url=download_url))
     return artifacts
+
+
+def _retrieved_sources(chunks: list[object]) -> list[RetrievedSource]:
+    """Reduce retrieved chunks to safe evidence cards for the client."""
+    sources: list[RetrievedSource] = []
+    for chunk in chunks:
+        metadata = getattr(chunk, "metadata", {})
+        source_id = (
+            metadata.get("source_id", "Document") if isinstance(metadata, dict) else "Document"
+        )
+        display_id = source_id.partition(":")[2] or source_id
+        # Chat uploads have an internal, collision-safe source ID such as
+        # ``chat/<agent-id>/<content-hash>-resume.pdf``. It must remain in
+        # RAG metadata, but citations only need the human-facing filename.
+        if display_id.startswith("chat/"):
+            display_id = display_id.rsplit("/", 1)[-1]
+            display_id = re.sub(r"^[0-9a-f]{16}-", "", display_id, flags=re.IGNORECASE)
+        excerpt = " ".join(str(getattr(chunk, "text", "")).split())[:280]
+        if excerpt:
+            sources.append(
+                RetrievedSource(
+                    source_id=display_id, excerpt=excerpt, score=float(getattr(chunk, "score", 0))
+                )
+            )
+    return sources
 
 
 class ChatService:
@@ -123,6 +156,7 @@ class ChatService:
                 chunks_retrieved=metadata.chunks_retrieved,
                 prep_time_seconds=metadata.prep_time_seconds,
                 artifacts=metadata.artifacts,
+                sources=metadata.sources,
             ),
         ][-MAX_HISTORY_MESSAGES:]
         await self._memory.save_checkpoint(
@@ -213,11 +247,13 @@ class ChatService:
             raise
 
         tool_results = prefix_result.get("tool_results", [])
+        context = prefix_result.get("context", [])
         metadata = ChatStreamMetadata(
             tools_invoked=[tool_result.tool_name for tool_result in tool_results],
             chunks_retrieved=len(prefix_result.get("context", [])),
             prep_time_seconds=time.monotonic() - start,
             artifacts=_artifact_references(tool_results),
+            sources=_retrieved_sources(context),
         )
         # Same GENERATE_ANSWER_PROMPT_TEMPLATE/formatters as
         # AgentGraph._generate_answer - duplicated here (not exposed as a

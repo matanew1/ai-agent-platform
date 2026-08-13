@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from agent.schemas import AgentResponse, CreateAgentRequest, SessionResponse, UpdateAgentRequest
 from agent.service import AgentService
-from authentication.controller import CurrentUser
+from authentication.controller import current_user
 from fastapi import APIRouter, HTTPException, Request, status
 from session.service import HybridSessionStore
+
+from shared.auth import AuthenticatedUser
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -24,13 +26,14 @@ router = APIRouter(prefix="/agents", tags=["agents"])
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
+@current_user
 async def create_agent(
-    payload: CreateAgentRequest, request: Request, current_user: CurrentUser
+    payload: CreateAgentRequest, request: Request, current_user: AuthenticatedUser
 ) -> AgentResponse:
     """Create an agent owned by the authenticated user."""
-    definitions: AgentService = request.app.state.agent_service
+    agentService: AgentService = request.app.state.agent_service
     try:
-        definition = await definitions.create(owner_id=current_user.id, **payload.model_dump())
+        definition = await agentService.create(owner_id=current_user.id, **payload.model_dump())
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -39,36 +42,41 @@ async def create_agent(
 
 
 @router.get("", response_model=list[AgentResponse])
-async def list_agents(request: Request, current_user: CurrentUser) -> list[AgentResponse]:
+@current_user
+async def list_agents(request: Request, current_user: AuthenticatedUser) -> list[AgentResponse]:
     """List agents owned by the authenticated user."""
-    definitions: AgentService = request.app.state.agent_service
+    agentService: AgentService = request.app.state.agent_service
     return [
         AgentResponse.model_validate(definition, from_attributes=True)
-        for definition in await definitions.list(current_user.id)
+        for definition in await agentService.list(current_user.id)
     ]
 
 
 @router.get("/{agent_id}", response_model=AgentResponse)
-async def get_agent(agent_id: str, request: Request, current_user: CurrentUser) -> AgentResponse:
+@current_user
+async def get_agent(
+    agent_id: str, request: Request, current_user: AuthenticatedUser
+) -> AgentResponse:
     """Get one agent owned by the authenticated user."""
-    definitions: AgentService = request.app.state.agent_service
-    definition = await definitions.get(current_user.id, agent_id)
+    agentService: AgentService = request.app.state.agent_service
+    definition = await agentService.get(current_user.id, agent_id)
     if definition is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     return AgentResponse.model_validate(definition, from_attributes=True)
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)
+@current_user
 async def update_agent(
     agent_id: str,
     payload: UpdateAgentRequest,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AuthenticatedUser,
 ) -> AgentResponse:
     """Update an owned definition and advance its configuration version."""
-    definitions: AgentService = request.app.state.agent_service
+    agentService: AgentService = request.app.state.agent_service
     try:
-        definition = await definitions.update(
+        definition = await agentService.update(
             current_user.id, agent_id, **payload.model_dump(exclude_unset=True)
         )
     except ValueError as exc:
@@ -81,10 +89,11 @@ async def update_agent(
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_agent(agent_id: str, request: Request, current_user: CurrentUser) -> None:
+@current_user
+async def delete_agent(agent_id: str, request: Request, current_user: AuthenticatedUser) -> None:
     """Delete an agent belonging to the authenticated user."""
-    definitions: AgentService = request.app.state.agent_service
-    if not await definitions.delete(current_user.id, agent_id):
+    agentService: AgentService = request.app.state.agent_service
+    if not await agentService.delete(current_user.id, agent_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
 
 
@@ -96,12 +105,13 @@ async def delete_agent(agent_id: str, request: Request, current_user: CurrentUse
     response_model=list[SessionResponse],
     response_model_exclude_defaults=True,
 )
+@current_user
 async def list_agent_sessions(
-    agent_id: str, request: Request, current_user: CurrentUser
+    agent_id: str, request: Request, current_user: AuthenticatedUser
 ) -> list[SessionResponse]:
     """List retained sessions for one owned agent, newest first."""
-    definitions: AgentService = request.app.state.agent_service
-    if await definitions.get(current_user.id, agent_id) is None:
+    agentService: AgentService = request.app.state.agent_service
+    if await agentService.get(current_user.id, agent_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     scoped_prefix = f"{current_user.id}:{agent_id}:"
     memory: HybridSessionStore = request.app.state.session_memory
@@ -122,15 +132,16 @@ async def list_agent_sessions(
     response_model=SessionResponse,
     response_model_exclude_defaults=True,
 )
+@current_user
 async def get_agent_session(
     agent_id: str,
     session_id: str,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AuthenticatedUser,
 ) -> SessionResponse:
     """Fetch one retained session history for an owned agent."""
-    definitions: AgentService = request.app.state.agent_service
-    if await definitions.get(current_user.id, agent_id) is None:
+    agentService: AgentService = request.app.state.agent_service
+    if await agentService.get(current_user.id, agent_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     scoped_prefix = f"{current_user.id}:{agent_id}:"
     scoped_id = f"{scoped_prefix}{session_id}"
@@ -149,15 +160,16 @@ async def get_agent_session(
     "/{agent_id}/sessions/{session_id:path}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@current_user
 async def delete_agent_session(
     agent_id: str,
     session_id: str,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AuthenticatedUser,
 ) -> None:
     """Delete one durable session belonging to an authenticated user's agent."""
-    definitions: AgentService = request.app.state.agent_service
-    if await definitions.get(current_user.id, agent_id) is None:
+    agentService: AgentService = request.app.state.agent_service
+    if await agentService.get(current_user.id, agent_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     scoped_id = f"{current_user.id}:{agent_id}:{session_id}"
     memory: HybridSessionStore = request.app.state.session_memory

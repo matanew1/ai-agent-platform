@@ -11,19 +11,21 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated
 
-from authentication.controller import CurrentUser
+from authentication.controller import current_user
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
 from rag.schemas import DocumentResponse, IngestDocumentRequest, IngestDocumentResponse
 from rag.service import RAGService
 
+from shared.auth import AuthenticatedUser
 from shared.documents import extract_document_text
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
 @router.get("", response_model=list[DocumentResponse])
+@current_user
 async def list_owner_documents(
-    request: Request, current_user: CurrentUser
+    request: Request, current_user: AuthenticatedUser
 ) -> list[DocumentResponse]:
     """List successfully indexed sources for the authenticated user."""
     document_library: RAGService = request.app.state.rag_service
@@ -40,8 +42,9 @@ async def list_owner_documents(
 
 
 @router.post("/text", response_model=IngestDocumentResponse)
+@current_user
 async def ingest_owner_document(
-    payload: IngestDocumentRequest, request: Request, current_user: CurrentUser
+    payload: IngestDocumentRequest, request: Request, current_user: AuthenticatedUser
 ) -> IngestDocumentResponse:
     """Index a text document into the authenticated user's library."""
     document_library: RAGService = request.app.state.rag_service
@@ -56,9 +59,10 @@ async def ingest_owner_document(
 
 
 @router.post("/file", response_model=IngestDocumentResponse)
+@current_user
 async def ingest_owner_file(
     request: Request,
-    current_user: CurrentUser,
+    current_user: AuthenticatedUser,
     file: Annotated[UploadFile, File()],
     source_id: Annotated[str | None, Form()] = None,
 ) -> IngestDocumentResponse:
@@ -81,8 +85,9 @@ async def ingest_owner_file(
 
 
 @router.delete("/{source_id:path}", status_code=status.HTTP_204_NO_CONTENT)
+@current_user
 async def delete_owner_document(
-    source_id: str, request: Request, current_user: CurrentUser
+    source_id: str, request: Request, current_user: AuthenticatedUser
 ) -> None:
     """Delete one exact source document belonging to the authenticated user."""
     document_library: RAGService = request.app.state.rag_service
