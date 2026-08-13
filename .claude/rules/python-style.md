@@ -64,8 +64,8 @@ unless the logic is non-obvious.
   `Exception` or leaking third-party exception types across a module
   boundary.
 - Infrastructure adapters catch the underlying SDK/driver exceptions and
-  re-raise as the module's own exception type — callers in `modules/*` never
-  need to know it's Motor/pymongo/qdrant-client underneath.
+  re-raise a provider-neutral error — callers in `modules/*` never need to
+  know whether PostgreSQL, Redis, Qdrant, or Ollama is underneath.
 - Use structured logging (`logger.info("event", extra={...})`), never
   `print()`.
 - Don't swallow exceptions to keep a request "succeeding" — surface failures;
@@ -75,7 +75,8 @@ unless the logic is non-obvious.
 ## Async
 
 - Anything doing I/O — DB calls, HTTP calls, LLM/embedding calls, tool
-  calls — is `async def` and awaited. Don't wrap sync I/O in a thread as a
-  substitute for using the async client that already exists (Motor for
-  Mongo, `redis.asyncio`, async Qdrant client, async LangChain calls).
+  calls — is `async def` and awaited. Use the available async client for
+  network/database I/O (`asyncpg` through SQLAlchemy, `redis.asyncio`, async
+  Qdrant, async LangChain); use `asyncio.to_thread` only for a genuinely
+  synchronous library such as PDF/DOCX extraction.
 - Don't mix sync blocking calls into async request handlers.

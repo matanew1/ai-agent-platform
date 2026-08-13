@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reset Local Data"
+  short_description: "Safely reset local development data"
+  default_prompt: "Use $reset-local-data to reset selected local services safely."

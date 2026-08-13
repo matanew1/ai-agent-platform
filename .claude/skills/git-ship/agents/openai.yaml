@@ -1,0 +1,4 @@
+interface:
+  display_name: "Git Ship"
+  short_description: "Prepare, review, version, and ship changes"
+  default_prompt: "Use $git-ship to prepare and ship the current change safely."
