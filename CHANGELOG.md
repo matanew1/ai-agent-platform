@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.11.1](https://github.com/matanew1/ai-agent-platform/compare/v0.11.0...v0.11.1) (2026-08-13)
+
+
+### Fixed
+
+* **agent:** prioritize enabled tools in routing ([27db291](https://github.com/matanew1/ai-agent-platform/commit/27db291a3dbfa10d4ad1a8a66aed689634a8c033))
+
 ## [0.11.0](https://github.com/matanew1/ai-agent-platform/compare/v0.10.0...v0.11.0) (2026-08-13)
 
 
