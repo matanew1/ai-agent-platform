@@ -79,7 +79,7 @@ ai-agent-platform/
 │   └── tool/
 │
 ├── pyproject.toml           # uv workspace root
-├── docker-compose.yml        # postgresql, redis, qdrant (local dev only)
+├── docker-compose.yml        # local PostgreSQL, Redis, Qdrant, pgAdmin, and Redis Commander
 ├── migrations/               # Alembic schema revisions
 └── .env.example
 ```
@@ -137,6 +137,9 @@ Local admin UIs (dev convenience only, not app runtime dependencies):
 | Qdrant dashboard    | http://localhost:6333/dashboard  |
 | pgAdmin             | http://localhost:8082             |
 | Redis Commander     | http://localhost:8083             |
+
+Redis Commander connects to the Compose `redis` service automatically; it is
+for local inspection only and is not an application runtime dependency.
 
 Copy `.env.example` to `.env` and adjust if needed (defaults assume a local
 Ollama server on its default port). Want a much larger model than fits on your
