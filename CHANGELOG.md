@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.12.0](https://github.com/matanew1/ai-agent-platform/compare/v0.11.2...v0.12.0) (2026-08-13)
+
+
+### Added
+
+* **settings:** persist speech and accessibility preferences ([640e53c](https://github.com/matanew1/ai-agent-platform/commit/640e53c382f5b6f65a4b06b98e9624b1db0ab515))
+
 ### [0.11.2](https://github.com/matanew1/ai-agent-platform/compare/v0.11.1...v0.11.2) (2026-08-13)
 
 
