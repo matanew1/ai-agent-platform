@@ -66,4 +66,5 @@ def test_stream_metadata_headers_are_exposed_to_browser_clients() -> None:
         "x-chunks-retrieved",
         "x-prep-time-seconds",
         "x-artifacts",
+        "x-indexed-documents",
     }

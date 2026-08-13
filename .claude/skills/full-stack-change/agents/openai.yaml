@@ -1,0 +1,4 @@
+interface:
+  display_name: "Full-Stack Change"
+  short_description: "Coordinate backend and web client changes"
+  default_prompt: "Use $full-stack-change to implement a coordinated API and UI change."

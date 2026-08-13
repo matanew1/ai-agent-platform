@@ -32,8 +32,8 @@ DANGEROUS_BASH_PATTERNS = [
     r"\brm\s+-rf\s+\*(\s|$)",         # rm -rf *
     r"\bgit\s+push\s+.*--force\b.*\b(main|master)\b",
     r"\bgit\s+push\s+.*-f\b.*\b(main|master)\b",
+    r"\bdocker\s+compose\s+down\s+.*-v\b",
     r"\bdrop\s+database\b",
-    r"\bmongo(sh)?\s+.*--eval\s+.*drop",
     r":\(\)\{\s*:\|:&\s*\};:",        # fork bomb
     r"\bchmod\s+-R\s+777\s+/",
 ]

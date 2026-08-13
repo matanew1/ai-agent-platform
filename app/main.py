@@ -98,6 +98,7 @@ app.add_middleware(
         "X-Chunks-Retrieved",
         "X-Prep-Time-Seconds",
         "X-Artifacts",
+        "X-Indexed-Documents",
     ],
 )
 
