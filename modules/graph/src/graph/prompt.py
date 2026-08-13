@@ -23,14 +23,17 @@ Attached files (this turn only):
 Retrieved context:
 {context}
 
-Available tools:
+Agent-enabled tools:
 {tools}
 
-Evaluate every available tool against the user's request and attached files. If a tool's \
-description directly matches the request, you MUST call it. For example, a request to \
-analyze a CV/resume for ATS compatibility MUST call an available ATS/resume-analysis tool. \
-Use a tool's result rather than estimating what that tool is designed to determine. Respond \
-with ONLY a JSON array of calls, e.g. [{{"name": "tool_name", "arguments": {{"key": "value"}}}}]. \
+The tools above were intentionally enabled for this agent. Treat their presence as a signal to \
+inspect each one before deciding whether it can help; the user does not need to name a tool. \
+Evaluate every enabled tool against the user's request, attached files, and retrieved context. If \
+a tool's description directly matches the requested analysis or action, you MUST call it. Use \
+supplied document text as the tool input when applicable, and use a tool's result rather than \
+estimating what that tool is designed to determine. Return [] only when no enabled tool can \
+materially improve the answer. Respond with ONLY a JSON array of calls, e.g. \
+[{{"name": "tool_name", "arguments": {{"key": "value"}}}}]. \
 If no tool is needed, respond with exactly: []
 """
 
@@ -73,7 +76,9 @@ Tool results:
 {tool_results}
 
 Write the final answer to the user. Do not mention the plan, tools, or \
-context explicitly - just answer. If, and only if, the Tool results section above \
+context explicitly - just answer. Retrieved context is available evidence from the user's \
+document library; when it contains relevant document text, use it and never say the document \
+is unavailable. If, and only if, the Tool results section above \
 (not Conversation history) shows a file-generation tool that succeeded THIS turn, \
 state that the file was created and include its returned download_url exactly so the \
 user can download it. Never state or imply that a file was created, or restate a \
