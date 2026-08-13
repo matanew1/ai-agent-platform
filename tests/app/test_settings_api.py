@@ -35,6 +35,13 @@ class _SettingsService:
                 "reduce_motion": False,
                 "show_sources": True,
                 "show_tool_activity": True,
+                "high_contrast": False,
+                "auto_read_responses": False,
+                "send_on_enter": True,
+                "sidebar_default_open": True,
+                "speech_voice_en": "preferred",
+                "speech_voice_he": "preferred",
+                "speech_input_locale": "auto",
             },
         )
 
@@ -69,11 +76,21 @@ def test_settings_are_authenticated_owner_scoped_and_validate_payloads() -> None
             "reduce_motion": False,
             "show_sources": True,
             "show_tool_activity": False,
+            "high_contrast": True,
+            "auto_read_responses": True,
+            "send_on_enter": False,
+            "sidebar_default_open": False,
+            "speech_voice_en": "com.apple.voice.en",
+            "speech_voice_he": "com.apple.voice.he",
+            "speech_input_locale": "he",
         },
     )
 
     assert saved.status_code == 200
     assert saved.json()["locale"] == "he"
+    assert saved.json()["auto_read_responses"] is True
+    assert saved.json()["speech_voice_he"] == "com.apple.voice.he"
+    assert saved.json()["speech_input_locale"] == "he"
     assert service.by_owner["owner-1"]["theme"] == "light"
     assert (
         client.get("/settings", cookies={SESSION_COOKIE_NAME: "owner-2"}).json()["locale"] == "en"
