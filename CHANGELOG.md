@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.11.2](https://github.com/matanew1/ai-agent-platform/compare/v0.11.1...v0.11.2) (2026-08-13)
+
+
+### Added
+
+* **settings:** add durable workspace settings ([e8e1074](https://github.com/matanew1/ai-agent-platform/commit/e8e1074adf0d0825156da0340177134e4d692149))
+
 ### [0.11.1](https://github.com/matanew1/ai-agent-platform/compare/v0.11.0...v0.11.1) (2026-08-13)
 
 
