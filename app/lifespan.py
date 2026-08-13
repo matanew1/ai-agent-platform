@@ -35,6 +35,8 @@ from rag.repository import RagRepository
 from rag.service import RAGService
 from session.repository import SessionRepository
 from session.service import HybridSessionStore
+from settings.repository import SettingsRepository
+from settings.service import SettingsService
 from tool.service import ToolService
 from tool.tools.local import ats, markdown, pdf
 from tool.tools.mcp.config import load_servers
@@ -200,6 +202,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # SECTION 4 - Build module services, injecting the infrastructure and
         # registry built above through their constructors.
         rag_service = RAGService(vector_store=vector_store, embedder=embedder)
+        settings_service = SettingsService(
+            repository=SettingsRepository(database.session_factory), cache=redis_cache
+        )
         # AgentRuntimeFactory does not compile anything here - unlike every
         # other service in this function, there is no fixed set of agent
         # definitions to build up front. It lazily compiles (and caches) one
@@ -225,6 +230,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.agent_service = agent_service
         app.state.agent_runtime_factory = agent_runtime_factory
         app.state.model_catalog = llm
+        app.state.settings_service = settings_service
 
         # SECTION 6 - Hand control back to FastAPI; it serves requests until
         # shutdown, then execution falls through to teardown below.

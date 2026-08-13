@@ -23,6 +23,7 @@ from logging.config import fileConfig
 import agent.models  # noqa: F401
 import artifact.models  # noqa: F401
 import session.models  # noqa: F401
+import settings.models  # noqa: F401
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
