@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import json
+import re
 
 from shared.types import ChatMessage, Chunk, ToolDefinition, ToolResult
 
+# A past assistant turn's saved `content` can contain a real
+# "...download it from /artifacts/document-3.pdf" sentence (the model was
+# told to state one, see GENERATE_ANSWER_PROMPT_TEMPLATE). Replaying that
+# verbatim into a later prompt via format_history gives the model a
+# copyable "/artifacts/document-N.pdf" precedent it can pattern-complete
+# into a *new*, never-generated filename on a turn where no file-generation
+# tool actually ran - confirmed live (a "what have changed?" turn that only
+# called rag_search still asserted a "document-4.pdf" download link, which
+# 404'd because that file was never created). Neutralizing the link in
+# history removes the pattern to extrapolate from; this turn's *own*
+# artifacts still reach the model correctly via format_tool_results, which
+# is untouched.
+_HISTORICAL_ARTIFACT_LINK = re.compile(r"/artifacts/\S+")
+
 
 def format_history(history: list[ChatMessage]) -> str:
-    return "\n".join(f"{turn.role}: {turn.content}" for turn in history) if history else "(none)"
+    if not history:
+        return "(none)"
+    return "\n".join(
+        f"{turn.role}: {_HISTORICAL_ARTIFACT_LINK.sub('[link omitted from history]', turn.content)}"
+        for turn in history
+    )
 
 
 def format_context(context: list[Chunk]) -> str:

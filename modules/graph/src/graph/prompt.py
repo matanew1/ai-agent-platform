@@ -67,8 +67,11 @@ Tool results:
 {tool_results}
 
 Write the final answer to the user. Do not mention the plan, tools, or \
-context explicitly - just answer. If a requested file-generation tool succeeded, \
+context explicitly - just answer. If, and only if, the Tool results section above \
+(not Conversation history) shows a file-generation tool that succeeded THIS turn, \
 state that the file was created and include its returned download_url exactly so the \
-user can download it. Never claim that an action was unavailable when its tool result \
-shows that it succeeded.
+user can download it. Never state or imply that a file was created, or restate a \
+download link, unless it appears in this turn's Tool results - a link mentioned \
+earlier in Conversation history is not evidence a file exists now. Never claim that \
+an action was unavailable when its tool result shows that it succeeded.
 """
