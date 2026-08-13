@@ -12,6 +12,23 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.10.0](https://github.com/matanew1/ai-agent-platform/compare/v0.9.0...v0.10.0) (2026-08-13)
+
+
+### Fixed
+
+* **chat:** stop the model from hallucinating stale download links ([#15](https://github.com/matanew1/ai-agent-platform/issues/15)) ([d87f7ae](https://github.com/matanew1/ai-agent-platform/commit/d87f7aed07a8f2387f74eb6409c73ff287e2850b))
+
+
+### Added
+
+* **chat:** persist chat attachments in RAG ([2f00404](https://github.com/matanew1/ai-agent-platform/commit/2f004048e0e5e2cd4d4fec6058ece96046bac24c))
+
+
+### Documentation
+
+* **dev:** document Redis Commander ([d35b567](https://github.com/matanew1/ai-agent-platform/commit/d35b567702330632929e817847d05d53cd104709))
+
 ## [0.9.0](https://github.com/matanew1/ai-agent-platform/compare/v0.8.0...v0.9.0) (2026-08-12)
 
 
