@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import pytest
-from chat.service import ChatService
+from chat.service import ChatService, _retrieved_sources
 from graph.graph import AgentError
 
 from shared.types import ChatMessage, Chunk, SessionCheckpoint, ToolDefinition, ToolResult
@@ -162,6 +162,27 @@ async def test_run_stream_returns_metadata_after_retrieval_and_tool_execution() 
     assert saved_answer.prep_time_seconds == metadata.prep_time_seconds
     tool_prompt = next(prompt for prompt in llm.prompts if "Available tools:" in prompt)
     assert "Retrieved context:\n- a" in tool_prompt
+    assert "MUST call it" in tool_prompt
+    assert "ATS/resume-analysis tool" in tool_prompt
+    assert "Never invent, hallucinate" in tool_prompt
+
+
+def test_retrieved_sources_show_chat_upload_filename_without_internal_id() -> None:
+    sources = _retrieved_sources(
+        [
+            Chunk(
+                id="1",
+                text="A concise resume excerpt.",
+                score=0.9,
+                metadata={
+                    "source_id": "chat/27efc292-b616-48ca-93ca-d1104601089b/"
+                    "947a3ee5b34ea102-Matan Bardugo CV 2026.pdf"
+                },
+            )
+        ]
+    )
+
+    assert sources[0].source_id == "Matan Bardugo CV 2026.pdf"
 
 
 async def test_generate_pdf_uses_retrieved_context_and_conversation_history() -> None:

@@ -100,6 +100,14 @@ class ArtifactReference(BaseModel):
     download_url: str
 
 
+class RetrievedSource(BaseModel):
+    """Safe, display-ready evidence for one retrieved RAG chunk."""
+
+    source_id: str
+    excerpt: str
+    score: float
+
+
 class ChatMessage(BaseModel):
     """One turn of a conversation.
 
@@ -122,6 +130,7 @@ class ChatMessage(BaseModel):
     chunks_retrieved: int = Field(default=0, ge=0)
     prep_time_seconds: float | None = Field(default=None, ge=0)
     artifacts: list[ArtifactReference] = Field(default_factory=list)
+    sources: list[RetrievedSource] = Field(default_factory=list)
 
 
 class SessionCheckpoint(BaseModel):

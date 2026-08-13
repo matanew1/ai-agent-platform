@@ -99,6 +99,7 @@ app.add_middleware(
         "X-Prep-Time-Seconds",
         "X-Artifacts",
         "X-Indexed-Documents",
+        "X-Retrieved-Sources",
     ],
 )
 
