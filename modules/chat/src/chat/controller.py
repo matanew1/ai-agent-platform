@@ -18,12 +18,13 @@ from pathlib import PurePath
 
 from agent.service import AgentService
 from artifact.service import ArtifactService
-from authentication.controller import CurrentUser
+from authentication.controller import current_user
 from chat.factory import AgentRuntimeFactory
 from chat.schemas import ChatRequest
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from shared.auth import AuthenticatedUser
 from shared.documents import extract_document_text
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -39,11 +40,12 @@ def _attachment_source_id(agent_id: str, filename: str, content: bytes) -> str:
 
 
 @router.post("/{agent_id}/chat/stream")
+@current_user
 async def stream_with_agent(
     agent_id: str,
     payload: ChatRequest,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AuthenticatedUser,
 ) -> StreamingResponse:
     """Stream a response from the caller's configured agent runtime.
 
@@ -117,6 +119,9 @@ async def stream_with_agent(
             "X-Indexed-Documents": json.dumps(indexed_documents),
             "X-Artifacts": json.dumps(
                 [artifact.model_dump(mode="json") for artifact in metadata.artifacts]
+            ),
+            "X-Retrieved-Sources": json.dumps(
+                [source.model_dump(mode="json") for source in metadata.sources]
             ),
         },
     )

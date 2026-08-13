@@ -9,8 +9,10 @@ from pathlib import Path
 
 from artifact.helpers import safe_artifact_filename
 from artifact.service import ARTIFACTS_URL_PATH, ArtifactService
-from authentication.controller import CurrentUser
+from authentication.controller import current_user
 from fastapi import APIRouter, HTTPException, Request, Response, status
+
+from shared.auth import AuthenticatedUser
 
 router = APIRouter(prefix=ARTIFACTS_URL_PATH, tags=["artifacts"])
 
@@ -18,10 +20,11 @@ _ALLOWED_EXTENSIONS = {".pdf", ".md", ".markdown"}
 
 
 @router.get("/{filename}")
+@current_user
 async def download_artifact(
     filename: str,
     request: Request,
-    current_user: CurrentUser,
+    current_user: AuthenticatedUser,
 ) -> Response:
     """Download a generated file only when it belongs to the verified user."""
     extension = Path(filename).suffix.lower()

@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-from typing import Annotated, cast
+from collections.abc import Callable
+from inspect import signature
+from typing import Annotated, Any, cast
 from urllib.parse import quote, unquote
 
 from authentication.repository import (
@@ -99,6 +101,35 @@ async def get_current_user(
 
 
 CurrentUser = Annotated[AuthenticatedUser, Depends(get_current_user)]
+
+
+def current_user(endpoint: Callable[..., Any]) -> Callable[..., Any]:
+    """Make an endpoint's ``current_user`` argument an auth dependency.
+
+    Use directly beneath a FastAPI route decorator::
+
+        @router.get("/resource")
+        @current_user
+        async def get_resource(current_user: AuthenticatedUser) -> Resource: ...
+
+    FastAPI reads the endpoint signature while registering the route.  The
+    decorator replaces only the named parameter's annotation with the typed
+    ``Depends(get_current_user)`` declaration, leaving the handler's Python
+    signature and its access to the verified principal unchanged.
+    """
+    endpoint_signature = signature(endpoint)
+    parameter = endpoint_signature.parameters.get("current_user")
+    if parameter is None:
+        raise TypeError("@current_user requires a 'current_user' endpoint parameter.")
+
+    authenticated_parameter = parameter.replace(annotation=CurrentUser)
+    endpoint.__signature__ = endpoint_signature.replace(
+        parameters=[
+            authenticated_parameter if item.name == "current_user" else item
+            for item in endpoint_signature.parameters.values()
+        ]
+    )
+    return endpoint
 
 
 def _safe_path(return_to: object) -> str:
@@ -222,7 +253,8 @@ async def logout(request: Request) -> RedirectResponse:
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(current_user: CurrentUser) -> MeResponse:
+@current_user
+async def me(current_user: AuthenticatedUser) -> MeResponse:
     """Return the authenticated caller's identity.
 
     This route *is* the frontend's auth gate: a 401 here is exactly what it
