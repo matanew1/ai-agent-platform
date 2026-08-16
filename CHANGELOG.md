@@ -12,6 +12,18 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.12.1](https://github.com/matanew1/ai-agent-platform/compare/v0.12.0...v0.12.1) (2026-08-16)
+
+
+### Documentation
+
+* **testing:** require browser E2E verification for frontend-facing changes ([3f58972](https://github.com/matanew1/ai-agent-platform/commit/3f58972958b4e9eefdf159c08bf35de4d58ad83a))
+
+
+### Fixed
+
+* **chat:** close provider stream when the browser disconnects ([d069e07](https://github.com/matanew1/ai-agent-platform/commit/d069e07431cd57d5cbbc0ef7fc5fd4108de703bc))
+
 ## [0.12.0](https://github.com/matanew1/ai-agent-platform/compare/v0.11.2...v0.12.0) (2026-08-13)
 
 
