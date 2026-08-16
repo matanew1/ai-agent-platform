@@ -84,10 +84,7 @@ class ScheduleRunner:
             logger.exception("Schedule %s failed to run", schedule.id)
 
     async def _run_once(self, schedule: AgentSchedule) -> None:
-        """
-        Run one turn for a single schedule, assuming its lock is held.
-        """
-
+        """Run one turn for a single schedule, assuming its lock is held."""
         # 1. Load the agent for this schedule, skipping if it no longer exists.
         agent = await self._agents.get(schedule.owner_id, schedule.agent_id)
         if agent is None:
@@ -95,6 +92,12 @@ class ScheduleRunner:
             return
 
         # 2. Build a ChatService and run one turn, fully draining the stream.
+        # A fresh session_id every fire is deliberate, not an oversight: each
+        # scheduled run is an independent unattended trigger, not a resumed
+        # conversation - record_run's last_run_session_id is bookkeeping for
+        # "where did the last result go", not a continuation pointer. An
+        # agent that should build on its own prior output would say so in
+        # trigger_message itself.
         session_id = (
             f"{schedule.owner_id}:{schedule.agent_id}:scheduled-{schedule.id}-{uuid4().hex}"
         )

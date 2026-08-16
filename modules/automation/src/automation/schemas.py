@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from shared.limits import MAX_CHAT_MESSAGE_CHARS
+
 
 class AgentSchedule(BaseModel):
     """A cron-triggered unattended run configured for one owned agent.
@@ -16,7 +18,7 @@ class AgentSchedule(BaseModel):
     of editing the agent it targets, and an agent-definition edit (which
     bumps ``Agent.version``) should never force a schedule rewrite. Stays
     local to this module rather than in ``shared/types.py`` since nothing
-    outside ``schedule`` needs to know its shape - see
+    outside ``automation`` needs to know its shape - see
     ``.claude/rules/architecture.md`` on cross-module sharing.
     """
 
@@ -24,7 +26,10 @@ class AgentSchedule(BaseModel):
     owner_id: str
     agent_id: str
     cron_expression: str = Field(min_length=1, max_length=120)
-    trigger_message: str = Field(min_length=1, max_length=8_000)
+    # trigger_message becomes a ChatService.run_stream message just like an
+    # interactive turn (see automation.runner), so it reuses the same bound
+    # rather than inventing a second, drifting number - see shared/limits.py.
+    trigger_message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
     enabled: bool = True
     next_run_at: datetime
     last_run_at: datetime | None = None
@@ -39,7 +44,7 @@ class CreateScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cron_expression: str = Field(min_length=1, max_length=120)
-    trigger_message: str = Field(min_length=1, max_length=8_000)
+    trigger_message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
 
 
 class UpdateScheduleRequest(BaseModel):
@@ -48,7 +53,9 @@ class UpdateScheduleRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cron_expression: str | None = Field(default=None, min_length=1, max_length=120)
-    trigger_message: str | None = Field(default=None, min_length=1, max_length=8_000)
+    trigger_message: str | None = Field(
+        default=None, min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS
+    )
     enabled: bool | None = None
 
 

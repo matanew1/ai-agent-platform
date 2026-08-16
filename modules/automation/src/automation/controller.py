@@ -1,6 +1,6 @@
 """HTTP routes for cron schedules attached to owned agents.
 
-Turn *execution* of a fired schedule happens in ``schedule.runner``, not
+Turn *execution* of a fired schedule happens in ``automation.runner``, not
 here - this router only lets an authenticated user configure schedules for
 their own agents, the same "configuration vs execution" split
 ``agent.controller``/``chat.controller`` already draw for definitions vs.

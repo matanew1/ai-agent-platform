@@ -1,12 +1,12 @@
 """Owner-scoped CRUD over agent schedules, plus cron-time computation.
 
-Turn *execution* of a fired schedule lives in ``schedule.runner`` - this
+Turn *execution* of a fired schedule lives in ``automation.runner`` - this
 service owns configuration only, mirroring ``agent.service.AgentService``'s
 own split between configuration and execution. Verifying that ``agent_id``
 belongs to the caller is the controller's job (the same "get the parent
 resource, 404 if missing" pattern ``agent.controller``'s session routes and
 ``chat.controller`` already use for the same reason), not this service's -
-so this service, unlike ``schedule.runner``, never needs an
+so this service, unlike ``automation.runner``, never needs an
 ``AgentService`` dependency at all.
 """
 

@@ -79,7 +79,7 @@ class ScheduleRepository:
     async def due(self, now: datetime) -> list[AgentSchedule]:
         """List every enabled schedule whose next run has arrived, across owners.
 
-        Not owner-scoped - ``schedule.runner.ScheduleRunner`` is the one
+        Not owner-scoped - ``automation.runner.ScheduleRunner`` is the one
         caller, and it operates process-wide rather than inside a single
         authenticated-user's request scope.
         """
