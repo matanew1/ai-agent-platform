@@ -12,6 +12,18 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.13.0](https://github.com/matanew1/ai-agent-platform/compare/v0.12.3...v0.13.0) (2026-08-16)
+
+
+### Added
+
+* **automation:** scheduled unattended agent runs ([036d9cf](https://github.com/matanew1/ai-agent-platform/commit/036d9cf42123ff149e7af155bd83c363cb6b5e4c))
+
+
+### Fixed
+
+* **automation:** address review findings ([b33ad94](https://github.com/matanew1/ai-agent-platform/commit/b33ad940e757ba68821f91ee173c5dc167111f8b))
+
 ### [0.12.3](https://github.com/matanew1/ai-agent-platform/compare/v0.12.2...v0.12.3) (2026-08-16)
 
 
