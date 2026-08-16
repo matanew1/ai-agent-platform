@@ -26,10 +26,11 @@ doesn't build anything itself.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from functools import partial
 
 from agent.repository import AgentRepository
@@ -37,6 +38,9 @@ from agent.service import AgentService
 from artifact.repository import ArtifactRepository
 from artifact.service import ArtifactService
 from authentication.repository import AuthSettings, build_authenticator_from_env
+from automation.repository import ScheduleRepository
+from automation.runner import ScheduleRunner
+from automation.service import ScheduleService
 from chat.service import build_chat_service
 from fastapi import FastAPI
 from rag.repository import RagRepository
@@ -160,6 +164,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # failing to spawn) still releases the connections just opened above,
     # instead of leaking them while startup fails - see SECTION 7.
     mcp_exit_stack = AsyncExitStack()
+    # Declared before the try so SECTION 7's finally can always check it,
+    # even if startup fails before SECTION 4 ever creates the real task.
+    schedule_runner_task: asyncio.Task[None] | None = None
     try:
         # SECTION 3 - Build the tool registry. Local tools are plain
         # functions (tool/tools/*.py) with no registration magic of their
@@ -224,6 +231,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             memory=memory,
             tool_registry=tool_registry,
         )
+        schedule_service = ScheduleService(repository=ScheduleRepository(database.session_factory))
         logger.info("Module services ready")
 
         # SECTION 5 - Expose services to route handlers via app.state - see
@@ -238,13 +246,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.chat_service_factory = chat_service_factory
         app.state.model_catalog = llm
         app.state.settings_service = settings_service
+        app.state.schedule_service = schedule_service
+
+        # ScheduleRunner is the one background task in the whole app - it
+        # reuses chat_service_factory/agent_service/redis_cache built above
+        # rather than opening any connection of its own, the same "no new
+        # infrastructure" property every other module service in this
+        # section already has. Started here, not exposed on app.state:
+        # nothing outside this function ever needs to reach it directly,
+        # unlike schedule_service (which chat.controller-shaped routes call
+        # into).
+        schedule_runner = ScheduleRunner(
+            schedules=schedule_service,
+            agents=agent_service,
+            chat_service_factory=chat_service_factory,
+            cache=redis_cache,
+        )
+        schedule_runner_task = asyncio.create_task(schedule_runner.run_forever())
 
         # SECTION 6 - Hand control back to FastAPI; it serves requests until
         # shutdown, then execution falls through to teardown below.
         yield
     finally:
-        # SECTION 7 - Release connections opened in SECTION 2 and SECTION 3B.
+        # SECTION 7 - Release connections opened in SECTION 2 and SECTION 3B,
+        # plus the background schedule runner started in SECTION 4.
         logger.info("Lifespan shutdown: releasing connections")
+        if schedule_runner_task is not None:
+            schedule_runner_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await schedule_runner_task
         await mcp_exit_stack.aclose()
         await redis_cache.close()
         await database.close()
