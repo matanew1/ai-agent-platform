@@ -1,4 +1,4 @@
-"""Unit tests for the streaming-only ``chat.service.ChatService``."""
+"""Unit tests for ``chat.service`` - ``ChatService`` and ``build_chat_service``."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import pytest
-from chat.service import ChatService, _retrieved_sources
-from graph.graph import AgentError
+from chat.service import ChatService, _retrieved_sources, build_chat_service
+from graph.graph import AgentError, OwnerScopedRetriever
 
-from shared.types import ChatMessage, Chunk, SessionCheckpoint, ToolDefinition, ToolResult
+from shared.types import Agent, ChatMessage, Chunk, SessionCheckpoint, ToolDefinition, ToolResult
 
 
 class FakeLLMProvider:
@@ -373,3 +373,95 @@ async def test_run_stream_wraps_a_generation_failure_as_agent_error() -> None:
         _, stream = await service.run_stream(session_id="s1", message="hello")
         async for _ in stream:
             pass
+
+
+class FakeFilterAwareRetriever:
+    """Fake satisfying rag.service.RAGService's search shape.
+
+    Records the filter it was called with - used for OwnerScopedRetriever,
+    which FakeRetriever above doesn't exercise (it never receives a
+    metadata_filter).
+    """
+
+    def __init__(self, chunks: list[Chunk] | None = None) -> None:
+        self._chunks = chunks if chunks is not None else [Chunk(id="1", text="doc", score=0.9)]
+        self.metadata_filters: list[dict[str, str] | None] = []
+
+    async def search(
+        self, query: str, top_k: int = 5, metadata_filter: dict[str, str] | None = None
+    ) -> list[Chunk]:
+        self.metadata_filters.append(metadata_filter)
+        return self._chunks[:top_k]
+
+
+class FakeConfigurableLLM:
+    """Records the per-agent options requested by the runtime factory."""
+
+    def __init__(self) -> None:
+        self.options: list[tuple[str | None, float | None]] = []
+
+    def with_options(
+        self, *, model: str | None = None, temperature: float | None = None
+    ) -> FakeConfigurableLLM:
+        self.options.append((model, temperature))
+        return self
+
+
+async def test_owner_scoped_retriever_search_scopes_by_owner_id_only() -> None:
+    retriever = FakeFilterAwareRetriever()
+    scoped = OwnerScopedRetriever(retriever, owner_id="owner-1")
+
+    await scoped.search("query")
+
+    assert retriever.metadata_filters == [{"owner_id": "owner-1"}]
+
+
+async def test_owner_scoped_retriever_search_returns_the_underlying_retrievers_results() -> None:
+    chunks = [Chunk(id="1", text="a", score=0.9), Chunk(id="2", text="b", score=0.8)]
+    retriever = FakeFilterAwareRetriever(chunks)
+    scoped = OwnerScopedRetriever(retriever, owner_id="owner-1")
+
+    results = await scoped.search("query", top_k=2)
+
+    assert results == chunks
+
+
+def test_build_chat_service_applies_the_agents_generation_options() -> None:
+    llm = FakeConfigurableLLM()
+    definition = Agent(
+        owner_id="owner-1",
+        name="Researcher",
+        system_prompt="Research carefully.",
+        model="qwen3:14b",
+        temperature=0.3,
+    )
+
+    runtime = build_chat_service(
+        definition,
+        llm=llm,
+        retriever=FakeFilterAwareRetriever(),
+        memory=object(),
+        tool_registry=object(),
+    )
+
+    assert isinstance(runtime, ChatService)
+    assert llm.options == [("qwen3:14b", 0.3)]
+
+
+def test_build_chat_service_returns_a_fresh_runtime_each_call() -> None:
+    llm = FakeConfigurableLLM()
+    definition = Agent(
+        owner_id="owner-1",
+        name="Researcher",
+        system_prompt="Research carefully.",
+        model="qwen3:14b",
+        temperature=0.3,
+    )
+    dependencies = dict(
+        llm=llm, retriever=FakeFilterAwareRetriever(), memory=object(), tool_registry=object()
+    )
+
+    first = build_chat_service(definition, **dependencies)
+    second = build_chat_service(definition, **dependencies)
+
+    assert first is not second

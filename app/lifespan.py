@@ -4,14 +4,22 @@ logic.
 Builds ``infrastructure`` adapters and module services **once, per
 process** - this function runs exactly once (FastAPI calls it once per
 app lifetime, not per request) - and attaches them to ``app.state`` so
-route handlers never construct a service themselves. Every infrastructure
-connection below must never happen per chat call, only once here. See
-``.claude/rules/architecture.md`` (dependency injection). One deliberate
-exception to "once, here": ``chat.factory.AgentRuntimeFactory`` (built
-below) does not itself compile anything - it lazily compiles (and caches)
-one ``AgentService`` per agent-definition version on first use, since
-definitions are created/edited at runtime and there is no fixed set to
-pre-compile at startup.
+route handlers never construct a *module* service (``AgentService``,
+``RAGService``, ...) themselves. Every infrastructure connection below
+must never happen per chat call, only once here. See
+``.claude/rules/architecture.md`` (dependency injection).
+
+``ChatService`` is the one exception: it bakes in a specific agent's
+system prompt, model options, and owner-scoped retriever at construction,
+and agent definitions are created/edited at runtime, so there is no fixed
+set to build here. What *is* built once, below, is
+``app.state.chat_service_factory`` - ``chat.service.build_chat_service``
+partially applied over the shared dependencies (``llm``, ``rag_service``,
+``session_memory``, ``tool_registry``) - so ``chat.controller`` still
+only ever reads one ``app.state`` attribute per the rule above; it
+supplies just the per-turn ``agent`` argument the partial leaves open,
+the same shape as calling any other constructed service, not wiring one
+up itself.
 ``app/main.py`` only wires this in as the FastAPI app's ``lifespan``; it
 doesn't build anything itself.
 """
@@ -29,7 +37,7 @@ from agent.service import AgentService
 from artifact.repository import ArtifactRepository
 from artifact.service import ArtifactService
 from authentication.repository import AuthSettings, build_authenticator_from_env
-from chat.factory import AgentRuntimeFactory
+from chat.service import build_chat_service
 from fastapi import FastAPI
 from rag.repository import RagRepository
 from rag.service import RAGService
@@ -205,19 +213,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         settings_service = SettingsService(
             repository=SettingsRepository(database.session_factory), cache=redis_cache
         )
-        # AgentRuntimeFactory does not compile anything here - unlike every
-        # other service in this function, there is no fixed set of agent
-        # definitions to build up front. It lazily compiles (and caches) one
-        # AgentService per definition version on first use - see
-        # chat.factory's module docstring for why that's the right shape
-        # here, not a gap in "build once at startup".
-        agent_runtime_factory = AgentRuntimeFactory(
+        # chat_service_factory is build_chat_service partially applied over
+        # the shared dependencies it needs on every call - see this module's
+        # docstring on why ChatService itself can't be built once, here,
+        # like everything else in this section.
+        chat_service_factory = partial(
+            build_chat_service,
             llm=llm,
             retriever=rag_service,
             memory=memory,
             tool_registry=tool_registry,
         )
-        logger.info("Module services ready (agent runtimes compile lazily per definition)")
+        logger.info("Module services ready")
 
         # SECTION 5 - Expose services to route handlers via app.state - see
         # .claude/rules/architecture.md (dependency injection).
@@ -228,7 +235,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.rag_service = rag_service
         app.state.session_memory = memory
         app.state.agent_service = agent_service
-        app.state.agent_runtime_factory = agent_runtime_factory
+        app.state.chat_service_factory = chat_service_factory
         app.state.model_catalog = llm
         app.state.settings_service = settings_service
 

@@ -20,7 +20,6 @@ from pathlib import PurePath
 from agent.service import AgentService
 from artifact.service import ArtifactService
 from authentication.controller import current_user
-from chat.factory import AgentRuntimeFactory
 from chat.schemas import ChatRequest
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -114,8 +113,8 @@ async def stream_with_agent(
             metadata={"owner_id": current_user.id, "agent_id": agent_id},
         )
         indexed_documents.append({"source_id": source_id, "chunks_indexed": chunks_indexed})
-    factory: AgentRuntimeFactory = request.app.state.agent_runtime_factory
-    metadata, stream = await factory.get(definition).run_stream(
+    chat_service = request.app.state.chat_service_factory(agent=definition)
+    metadata, stream = await chat_service.run_stream(
         session_id=f"{current_user.id}:{agent_id}:{payload.session_id}",
         message=payload.message,
         tools=definition.allowed_tools,

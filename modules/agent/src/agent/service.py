@@ -2,7 +2,7 @@
 
 Separate from ``chat.service.ChatService`` (turn *execution*) on purpose -
 this is turn *configuration*: create/read/update/delete the
-prompt/tool-allowlist that ``chat.factory.AgentRuntimeFactory`` turns into
+prompt/tool-allowlist that ``chat.service.build_chat_service`` turns into
 a running ``ChatService`` per definition. Two responsibilities, two
 modules (SRP).
 """
