@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from datetime import UTC, datetime
 from agent.controller import router
 from agent.service import AgentService
 from authentication.repository import SESSION_COOKIE_NAME, SessionResult
+from chat.controller import _stream_until_disconnect
 from chat.controller import router as chat_router
 from chat.service import ChatStreamMetadata
 from fastapi import FastAPI
@@ -57,6 +59,15 @@ class _Repository:
 class _ToolService:
     def get_tools(self) -> list[ToolDefinition]:
         return [ToolDefinition(name="fetch", description="Fetches a URL.")]
+
+
+class _DisconnectedRequest:
+    def __init__(self) -> None:
+        self._checks = 0
+
+    async def is_disconnected(self) -> bool:
+        self._checks += 1
+        return self._checks > 1
 
 
 class _ModelCatalog:
@@ -522,6 +533,28 @@ def test_chat_stream_indexes_attached_files_for_the_authenticated_user_and_agent
             "metadata": {"owner_id": "owner-1", "agent_id": agent_id},
         }
     ]
+
+
+def test_chat_stream_closes_the_provider_iterator_when_the_browser_disconnects() -> None:
+    closed = False
+
+    async def source() -> AsyncIterator[str]:
+        nonlocal closed
+        try:
+            yield "first"
+            yield "second"
+        finally:
+            closed = True
+
+    async def collect() -> list[str]:
+        return [chunk async for chunk in _stream_until_disconnect(_DisconnectedRequest(), source())]
+
+    # The fake request reports "disconnected" starting on its second check, i.e.
+    # after "first" has already been yielded, so the stream must stop there and
+    # never reach "second" — proving the disconnect check, not stream exhaustion,
+    # ended it.
+    assert asyncio.run(collect()) == ["first"]
+    assert closed is True
 
 
 def test_chat_stream_rejects_invalid_base64_attachment() -> None:

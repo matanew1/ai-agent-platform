@@ -216,10 +216,14 @@ class ChatService:
         manually (``AsyncExitStack``, not ``async with``) and closed
         inside the generator's ``finally``. That means the returned
         generator must actually be consumed (or explicitly closed) or
-        the lock leaks - true of the one real caller,
-        the public API route, which immediately hands it to
-        ``StreamingResponse`` and Starlette guarantees will drain or
-        close it either way, including on an early client disconnect.
+        the lock leaks - true of the one real caller, the public API
+        route, which wraps this generator in
+        ``chat.controller._stream_until_disconnect`` before handing it
+        to ``StreamingResponse``. Starlette's own ``StreamingResponse``
+        does not proactively close the body generator on an early
+        client disconnect (it just stops when ``send()`` starts
+        raising); ``_stream_until_disconnect`` is what actually closes
+        it in that case, draining it otherwise.
 
         Raises:
             AgentError: If ``retrieve_context``/``execute_tools`` fails
