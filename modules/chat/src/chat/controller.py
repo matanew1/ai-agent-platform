@@ -14,6 +14,7 @@ import base64
 import binascii
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from pathlib import PurePath
 
 from agent.service import AgentService
@@ -28,6 +29,28 @@ from shared.auth import AuthenticatedUser
 from shared.documents import extract_document_text
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+
+
+async def _stream_until_disconnect(
+    request: Request, stream: AsyncIterator[str]
+) -> AsyncIterator[str]:
+    """Yield a response stream until its browser client disconnects.
+
+    Closing the source generator cancels an in-flight provider stream and
+    releases the chat service's per-session lock instead of continuing an
+    answer the browser has explicitly stopped.
+    """
+    iterator = stream.__aiter__()
+    try:
+        while not await request.is_disconnected():
+            try:
+                yield await anext(iterator)
+            except StopAsyncIteration:
+                return
+    finally:
+        close_stream = getattr(iterator, "aclose", None)
+        if close_stream is not None:
+            await close_stream()
 
 
 def _attachment_source_id(agent_id: str, filename: str, content: bytes) -> str:
@@ -110,7 +133,7 @@ async def stream_with_agent(
             await close_stream()
         raise
     return StreamingResponse(
-        stream,
+        _stream_until_disconnect(request, stream),
         media_type="text/plain",
         headers={
             "X-Tools-Invoked": json.dumps(metadata.tools_invoked),
