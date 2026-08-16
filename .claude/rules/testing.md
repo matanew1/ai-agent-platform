@@ -99,3 +99,11 @@ speculatively before there's a real test to put in it.
 - A new `infrastructure` adapter ships with an integration test proving it
   satisfies its port.
 - Bug fixes get a regression test that fails before the fix and passes after.
+
+## Browser E2E verification
+
+- For every frontend, browser-interaction, route, or streamed-API change,
+  update or add a relevant browser E2E test in `../ai-agent-platform-web/e2e/`
+  and run `npm run test:e2e` from that repository before reporting completion.
+- Do not report UI work complete when the E2E suite fails. Inspect the failure,
+  fix the product or test only when the assertion is invalid, then rerun it.
