@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.12.3](https://github.com/matanew1/ai-agent-platform/compare/v0.12.2...v0.12.3) (2026-08-16)
+
+
+### Fixed
+
+* **security:** remove direct tool invocation and bound payload sizes ([8b87fe4](https://github.com/matanew1/ai-agent-platform/commit/8b87fe4ca1c0215357ebd4695955c58788da5f66))
+
 ### [0.12.2](https://github.com/matanew1/ai-agent-platform/compare/v0.12.1...v0.12.2) (2026-08-16)
 
 
