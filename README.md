@@ -303,12 +303,13 @@ uv run ruff format . # format
 Set `LOG_LEVEL=DEBUG` to see everything (per-node LLM calls, tool calls,
 Redis/PostgreSQL/Qdrant round trips) - default is `INFO`. Every infrastructure
 adapter and module service is built exactly once, in `app/lifespan.py`, and
-reused for every request, with one exception: `AgentRuntimeFactory` lazily
-compiles (and caches) one `ChatService` - and, inside it, one compiled
-LangGraph preparation graph - per agent version, on first use
-(see [`architecture.md`](.claude/rules/architecture.md#dependency-injection)),
-since agents are created/edited at runtime and there's no fixed
-set to pre-compile at startup.
+reused for every request, with one exception: `chat.service.build_chat_service`
+builds one `ChatService` - and, inside it, one compiled LangGraph
+preparation graph - per turn, since agents are created/edited at runtime
+and there's no fixed set to pre-compile at startup. Compiling that
+two-node graph is a cheap, in-memory `StateGraph.compile()` (no LLM or
+network call), so there's nothing about it worth caching across turns
+(see [`architecture.md`](.claude/rules/architecture.md#dependency-injection)).
 
 ### Performance notes
 

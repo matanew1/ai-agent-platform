@@ -170,14 +170,6 @@ class _ChatService:
         return metadata, _stream()
 
 
-class _RuntimeFactory:
-    def __init__(self, service: _ChatService) -> None:
-        self._service = service
-
-    def get(self, definition: Agent) -> _ChatService:
-        return self._service
-
-
 class _Authenticator:
     """Treat the test session-cookie value as the provider-issued subject."""
 
@@ -206,7 +198,7 @@ class _ArtifactService:
 def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, _ChatService]:
     app = FastAPI()
     document_index = _DocumentIndex()
-    agent_service = _ChatService()
+    chat_service = _ChatService()
     model_catalog = _ModelCatalog()
     app.state.agent_service = AgentService(
         _Repository(),
@@ -215,16 +207,22 @@ def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, 
     )
     app.state.rag_service = document_index
     app.state.session_memory = _Memory()
-    app.state.agent_runtime_factory = _RuntimeFactory(agent_service)
+    app.state.tool_registry = _ToolService()
     app.state.model_catalog = model_catalog
     app.state.authenticator = _Authenticator()
     app.state.artifact_service = _ArtifactService()
+    # chat.controller reads app.state.chat_service_factory (a real
+    # app/lifespan.py builds chat.service.build_chat_service partially
+    # applied over the shared dependencies) - faked here so route tests
+    # don't compile a real LangGraph workflow, and scoped to this app
+    # instance rather than mutating chat.controller globally.
+    app.state.chat_service_factory = lambda agent: chat_service
     app.include_router(router)
     app.include_router(chat_router)
     app.include_router(documents_router)
     app.include_router(models_router)
     cookies = {SESSION_COOKIE_NAME: "owner-1"} if authenticated else None
-    return TestClient(app, cookies=cookies), document_index, agent_service
+    return TestClient(app, cookies=cookies), document_index, chat_service
 
 
 def test_agent_routes_require_session_cookie_and_reject_caller_owner_id() -> None:

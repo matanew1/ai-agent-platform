@@ -220,9 +220,9 @@ class OwnerScopedRetriever:
     Documents belong to an owner (a future userID), not to a specific
     agent - see ``rag.controller``'s ``documents_router``. Every agent that
     owner_id owns shares the same pool, so this only needs owner_id, not an
-    agent_id. Built once per definition version by
-    ``agent.factory.AgentRuntimeFactory`` and handed to
-    ``AgentGraph``/``AgentService`` as their only retrieval dependency.
+    agent_id. Built fresh per turn by ``chat.service.build_chat_service``
+    and handed to ``AgentGraph``/``ChatService`` as their only retrieval
+    dependency.
     """
 
     def __init__(self, retriever: RAGService, owner_id: str) -> None:

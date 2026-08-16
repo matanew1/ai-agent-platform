@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from graph.graph import AgentError, AgentGraph, OwnerScopedRetriever
 from graph.prompt import GENERATE_ANSWER_PROMPT_TEMPLATE, SYSTEM_PROMPT
 from graph.state import AgentState
+from rag.service import RAGService
 from session.service import HybridSessionStore
 from tool.service import ToolService
 
@@ -22,6 +23,7 @@ from shared.prompt_formatters import (
     format_tool_results,
 )
 from shared.types import (
+    Agent,
     ArtifactReference,
     ChatMessage,
     RetrievedSource,
@@ -122,9 +124,12 @@ class ChatService:
     ) -> None:
         self._memory = memory
         self._llm = llm
-        # The preparation graph is compiled once here, never per request.
-        # The final LLM call is intentionally outside LangGraph so its
-        # output can be streamed directly to the client.
+        # The preparation graph is compiled once per ChatService instance,
+        # here - never inside run_stream. build_chat_service below builds a
+        # fresh instance (and so recompiles this graph) once per turn; see
+        # its docstring for why that's cheap enough not to need caching
+        # across turns. The final LLM call is intentionally outside
+        # LangGraph so its output can be streamed directly to the client.
         self._system_prompt = system_prompt
         self._agent_graph = AgentGraph(
             llm=llm,
@@ -289,4 +294,50 @@ class ChatService:
         return metadata, _stream_answer()
 
 
-__all__ = ["ChatService", "ChatStreamMetadata"]
+def build_chat_service(
+    agent: Agent,
+    llm: LanguageModelClient,
+    retriever: RAGService,
+    memory: HybridSessionStore,
+    tool_registry: ToolService,
+) -> ChatService:
+    """Build a fresh ``ChatService`` runtime for one agent turn.
+
+    ``ChatService`` bakes in a specific system prompt, an owner-scoped
+    retriever, and per-agent model options at construction time -
+    ``AgentGraph`` isn't parameterized per-call, so there is no shape here
+    that a cached instance could safely serve for a different agent (or a
+    later edit to the same one). A previous version of this function
+    (``AgentRuntimeFactory``) cached the result keyed by
+    ``(agent.id, agent.version)`` to avoid rebuilding it every turn - dropped
+    because there was nothing worth caching: ``ChatService.__init__``
+    compiling its two-node preparation graph is an in-memory
+    ``StateGraph.compile()`` with no LLM/network call, not the same kind of
+    "expensive to rebuild" as the module-scoped services ``app/lifespan.py``
+    genuinely does build once at startup. The real per-turn cost is the LLM
+    round-trips inside ``run_stream``, which this construction step never
+    touches.
+
+    Args:
+        agent: The agent definition this turn is running as - supplies the
+            system prompt, model, temperature, and owner scoping.
+        llm: Language model client; ``with_options`` applies the agent's
+            model/temperature for this call only.
+        retriever: RAG retrieval service, scoped to ``agent.owner_id`` via
+            ``OwnerScopedRetriever``.
+        memory: Session checkpoint store.
+        tool_registry: Registry of tools available to the agent.
+
+    Returns:
+        A ``ChatService`` ready to run one turn via ``run_stream``.
+    """
+    return ChatService(
+        system_prompt=agent.system_prompt,
+        retriever=OwnerScopedRetriever(retriever, agent.owner_id),
+        llm=llm.with_options(model=agent.model, temperature=agent.temperature),
+        memory=memory,
+        tool_registry=tool_registry,
+    )
+
+
+__all__ = ["ChatService", "ChatStreamMetadata", "build_chat_service"]
