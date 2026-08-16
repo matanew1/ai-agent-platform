@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [0.12.2](https://github.com/matanew1/ai-agent-platform/compare/v0.12.1...v0.12.2) (2026-08-16)
+
+
+### Changed
+
+* **chat:** replace AgentRuntimeFactory with a plain per-turn builder ([8b1b2b9](https://github.com/matanew1/ai-agent-platform/commit/8b1b2b9c00339f972bd60c09acd4f4f3a371e890))
+
 ### [0.12.1](https://github.com/matanew1/ai-agent-platform/compare/v0.12.0...v0.12.1) (2026-08-16)
 
 
