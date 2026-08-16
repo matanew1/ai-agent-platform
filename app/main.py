@@ -22,6 +22,7 @@ from agent.controller import router as agents_router
 from artifact.controller import router as artifacts_router
 from authentication.controller import get_current_user
 from authentication.controller import router as auth_router
+from automation.controller import router as schedules_router
 from chat.controller import router as chat_router
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
@@ -112,6 +113,7 @@ app.include_router(auth_router)
 app.include_router(agents_router)
 app.include_router(chat_router)
 app.include_router(documents_router)
+app.include_router(schedules_router)
 app.include_router(settings_router)
 app.include_router(models_router, dependencies=[Depends(get_current_user)])
 # Tools can perform network and filesystem work, so the composition root
@@ -155,6 +157,7 @@ def run() -> None:
             "modules/graph/src",
             "modules/session/src",
             "modules/settings/src",
+            "modules/automation/src",
         ],
     )
 

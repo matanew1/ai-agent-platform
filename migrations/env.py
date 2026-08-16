@@ -22,6 +22,7 @@ from logging.config import fileConfig
 # subclassing infrastructure.database.postgres.Base.
 import agent.models  # noqa: F401
 import artifact.models  # noqa: F401
+import automation.models  # noqa: F401
 import session.models  # noqa: F401
 import settings.models  # noqa: F401
 from alembic import context
