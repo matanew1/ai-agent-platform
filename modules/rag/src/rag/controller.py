@@ -18,6 +18,7 @@ from rag.service import RAGService
 
 from shared.auth import AuthenticatedUser
 from shared.documents import extract_document_text
+from shared.limits import MAX_DOCUMENT_BYTES
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -68,8 +69,17 @@ async def ingest_owner_file(
 ) -> IngestDocumentResponse:
     """Extract and index a TXT, PDF, or DOCX file into the owner's document library."""
     filename = file.filename or "upload"
+    content = await file.read()
+    if len(content) > MAX_DOCUMENT_BYTES:
+        # Field(max_length=...) on IngestDocumentRequest.text covers
+        # POST /documents/text; an UploadFile is read (and only then
+        # sized) here instead, so this route needs its own check.
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=f"File exceeds the {MAX_DOCUMENT_BYTES // (1024 * 1024)} MB upload limit.",
+        )
     try:
-        text = await asyncio.to_thread(extract_document_text, filename, await file.read())
+        text = await asyncio.to_thread(extract_document_text, filename, content)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(exc)

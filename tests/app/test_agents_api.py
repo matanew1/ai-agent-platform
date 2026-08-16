@@ -19,6 +19,12 @@ from model.controller import router as models_router
 from rag.controller import router as documents_router
 
 from shared.auth import AuthenticatedUser, AuthenticationError
+from shared.limits import (
+    MAX_CHAT_ATTACHMENTS,
+    MAX_CHAT_MESSAGE_CHARS,
+    MAX_DOCUMENT_BYTES,
+    MAX_DOCUMENT_TEXT_CHARS,
+)
 from shared.types import (
     Agent,
     ArtifactReference,
@@ -492,7 +498,7 @@ def test_swagger_exposes_only_the_public_agents_surface() -> None:
     assert "/agents/{agent_id}/chat/stream" in schema["paths"]
     assert schema["paths"]["/models"]["get"]["security"] == [{"SessionCookie": []}]
     assert schema["paths"]["/tools"]["get"]["security"] == [{"SessionCookie": []}]
-    assert schema["paths"]["/tools/{name}"]["post"]["security"] == [{"SessionCookie": []}]
+    assert "post" not in schema["paths"].get("/tools/{name}", {})
 
 
 def test_chat_stream_indexes_attached_files_for_the_authenticated_user_and_agent() -> None:
@@ -570,3 +576,69 @@ def test_chat_stream_rejects_invalid_base64_attachment() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_direct_tool_invocation_route_is_removed() -> None:
+    """POST /tools/{name} let any authenticated user call any registered
+    tool - including fetch - with no per-agent allowed_tools check at
+    all, bypassing the one thing gating tool access everywhere else
+    (graph.graph._execute_tools). Nothing in the web client ever called
+    it. Removed rather than authorized - see tool.controller's module
+    docstring."""
+    client, *_ = _client()
+
+    response = client.post("/tools/echo", json={"arguments": {}})
+
+    assert response.status_code in (404, 405)
+
+
+def test_chat_stream_rejects_an_oversized_message() -> None:
+    client, *_ = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": []})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "x" * (MAX_CHAT_MESSAGE_CHARS + 1)},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_stream_rejects_more_attachments_than_the_cap() -> None:
+    client, *_ = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": []})
+    agent_id = client.get("/agents").json()[0]["id"]
+    files = [
+        {"filename": f"f{i}.txt", "content_base64": "aGk="} for i in range(MAX_CHAT_ATTACHMENTS + 1)
+    ]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "files": files},
+    )
+
+    assert response.status_code == 422
+
+
+def test_ingest_owner_document_rejects_oversized_text() -> None:
+    client, *_ = _client()
+
+    response = client.post(
+        "/documents/text",
+        json={"source_id": "notes", "text": "x" * (MAX_DOCUMENT_TEXT_CHARS + 1)},
+    )
+
+    assert response.status_code == 422
+
+
+def test_ingest_owner_file_rejects_a_file_over_the_upload_limit() -> None:
+    client, *_ = _client()
+    oversized = b"a" * (MAX_DOCUMENT_BYTES + 1)
+
+    response = client.post(
+        "/documents/file",
+        files={"file": ("big.txt", oversized, "text/plain")},
+    )
+
+    assert response.status_code == 413

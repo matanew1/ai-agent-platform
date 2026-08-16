@@ -55,10 +55,15 @@ has no `internal/`") - this skill is the checklist, not a restatement.
    from the LLM's tool call with no validation? `extract_pdf`/
    `extract_markdown` currently don't sandbox `path` at all (a known,
    flagged gap - arbitrary local file read) - don't repeat that pattern
-   without at least considering an allowlisted base directory. Also
-   remember `POST /tools/{name}` (`tool/api/router.py`) lets any HTTP caller
-   invoke this tool directly and unauthenticated, bypassing the agent's own
-   tool-call mediation entirely.
+   without at least considering an allowlisted base directory. `tool`'s
+   only HTTP surface is `GET /tools` (`modules/tool/src/tool/controller.py`,
+   list-only) - there is deliberately no `POST /tools/{name}` to invoke a
+   tool directly by HTTP; a prior version of that route let any
+   authenticated caller invoke any registered tool with arbitrary
+   arguments, bypassing `agent.allowed_tools` (the only thing gating tool
+   access via `graph.graph._execute_tools`) entirely. A new tool is only
+   ever reachable through that agent-mediated, allowlist-checked path -
+   don't add a direct-invocation route for it.
 
 5. **Tests.** Add to `tests/tool/test_tools.py` or a new file, mirroring the
    real-files-no-mocking pattern already there - a local tool with no

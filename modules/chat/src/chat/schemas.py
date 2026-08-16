@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from shared.limits import (
+    MAX_ATTACHMENT_BASE64_CHARS,
+    MAX_CHAT_ATTACHMENTS,
+    MAX_CHAT_MESSAGE_CHARS,
+)
+
 
 class ChatFileAttachment(BaseModel):
     """One file attached to a chat turn.
@@ -15,15 +21,15 @@ class ChatFileAttachment(BaseModel):
     """
 
     filename: str
-    content_base64: str
+    content_base64: str = Field(max_length=MAX_ATTACHMENT_BASE64_CHARS)
 
 
 class ChatRequest(BaseModel):
     """One chat turn for a configurable agent."""
 
     session_id: str
-    message: str
-    files: list[ChatFileAttachment] = Field(default_factory=list)
+    message: str = Field(max_length=MAX_CHAT_MESSAGE_CHARS)
+    files: list[ChatFileAttachment] = Field(default_factory=list, max_length=MAX_CHAT_ATTACHMENTS)
 
 
 __all__ = ["ChatFileAttachment", "ChatRequest"]

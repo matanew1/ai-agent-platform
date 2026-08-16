@@ -6,12 +6,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from shared.limits import MAX_DOCUMENT_TEXT_CHARS
+
 
 class IngestDocumentRequest(BaseModel):
     """Text document content to add to one owner's shared knowledge base."""
 
     source_id: str
-    text: str
+    text: str = Field(max_length=MAX_DOCUMENT_TEXT_CHARS)
     chunk_size: int = Field(default=500, gt=0)
     chunk_overlap: int = Field(default=50, ge=0)
 
