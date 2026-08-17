@@ -124,7 +124,13 @@ async def stream_with_agent(
     metadata, stream = await chat_service.run_stream(
         session_id=f"{current_user.id}:{agent_id}:{payload.session_id}",
         message=payload.message,
-        tools=payload.tools if payload.tools is not None else definition.allowed_tools,
+        # An override always wins as-is (including an explicit [], which
+        # must restrict to zero tools - see graph.graph._execute_tools).
+        # With no override, an agent with its own empty allowed_tools is
+        # unrestricted (not "restricted to nothing"), so that case passes
+        # None through rather than [] - ChatService.run_stream/AgentState
+        # both depend on this distinction, not just truthiness.
+        tools=payload.tools if payload.tools is not None else (definition.allowed_tools or None),
         attachments=attachments,
     )
     artifact_service: ArtifactService = request.app.state.artifact_service

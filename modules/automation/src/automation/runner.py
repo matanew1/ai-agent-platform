@@ -103,14 +103,18 @@ class ScheduleRunner:
         )
         # schedule.tools narrows the agent's own allowed_tools for this one
         # schedule (validated as a subset at write time - see
-        # automation.controller._require_tools_subset); None means "use
-        # whatever the agent itself is allowed", the same as an interactive
-        # turn gets via chat.controller.
+        # automation.controller._require_tools_subset), including an
+        # explicit [] restricting to zero tools. With no override, an agent
+        # with its own empty allowed_tools is unrestricted (not "restricted
+        # to nothing"), so that case passes None through, matching
+        # chat.controller's identical resolution for an interactive turn -
+        # see graph.graph._execute_tools on why None vs [] must stay
+        # distinct here.
         chat_service = self._chat_service_factory(agent=agent)
         _, stream = await chat_service.run_stream(
             session_id=session_id,
             message=schedule.trigger_message,
-            tools=schedule.tools if schedule.tools is not None else agent.allowed_tools,
+            tools=schedule.tools if schedule.tools is not None else (agent.allowed_tools or None),
         )
 
         # 3. Drain the stream to trigger the turn's checkpoint save and lock release.

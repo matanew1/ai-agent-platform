@@ -271,7 +271,15 @@ class AgentGraph:
         artifact_request = _requested_artifact(state.input)
         if artifact_request and artifact_request[0] not in registered_names:
             raise AgentError(f"Requested artifact tool {artifact_request[0]!r} is not registered.")
-        if state.allowed_tools:
+        # None means "no restriction" (an agent with an empty allowed_tools
+        # is itself unrestricted, see shared.tools's docstring); an empty
+        # *list* is a caller deliberately narrowing to zero tools (e.g. a
+        # schedule/chat tools override, see chat.controller/
+        # automation.runner) and must actually filter everything out, not
+        # be treated the same as "no restriction" via a truthy check - that
+        # was a real bug (an explicit tools=[] silently granted every
+        # registered tool instead of none).
+        if state.allowed_tools is not None:
             allowed = set(state.allowed_tools)
             tools = [tool for tool in tools if tool.name in allowed]
             if artifact_request and artifact_request[0] not in allowed:

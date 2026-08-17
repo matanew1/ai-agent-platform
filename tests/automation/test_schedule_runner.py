@@ -89,7 +89,7 @@ class _FakeChatService:
         self.calls: list[dict[str, object]] = []
         self._run_stream_error = run_stream_error
 
-    async def run_stream(self, *, session_id: str, message: str, tools: list[str]):
+    async def run_stream(self, *, session_id: str, message: str, tools: list[str] | None):
         self.calls.append({"session_id": session_id, "message": message, "tools": tools})
         if self._run_stream_error is not None:
             raise self._run_stream_error
@@ -157,6 +157,26 @@ async def test_fire_due_uses_the_agents_allowed_tools_when_the_schedule_has_no_o
     await runner._fire_due()
 
     assert chat_service.calls[0]["tools"] == ["fetch", "extract_pdf"]
+
+
+async def test_fire_due_resolves_no_override_on_an_unrestricted_agent_to_none() -> None:
+    # An agent's own allowed_tools=[] means "unrestricted" - the resolved
+    # tools argument reaching ChatService.run_stream must be None, not [],
+    # or graph.graph._execute_tools would treat this the same as "restrict
+    # to zero tools" (the bug this module's tools field introduced and
+    # then fixed - see shared.tools/graph.state).
+    schedules = _FakeSchedules(due=[_schedule("sched-1")])
+    chat_service = _FakeChatService()
+    runner = ScheduleRunner(
+        schedules=schedules,  # type: ignore[arg-type]
+        agents=_FakeAgents({"agent-1": _agent(allowed_tools=[])}),  # type: ignore[arg-type]
+        chat_service_factory=lambda agent: chat_service,
+        cache=_FakeCache(),  # type: ignore[arg-type]
+    )
+
+    await runner._fire_due()
+
+    assert chat_service.calls[0]["tools"] is None
 
 
 async def test_fire_due_narrows_to_the_schedules_own_tools_override() -> None:

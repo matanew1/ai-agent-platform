@@ -272,6 +272,41 @@ async def test_run_stream_honors_the_tool_allowlist() -> None:
     assert tools.calls == []
 
 
+async def test_run_stream_with_an_explicit_empty_tools_override_calls_nothing() -> None:
+    # Regression test: AgentState.allowed_tools=[] must actually restrict
+    # to zero tools, not be treated the same as tools=None ("unrestricted")
+    # via a truthy check - see graph.graph._execute_tools. This is reachable
+    # from the schedule editor's "Test message" preview (every checkbox
+    # unchecked) and a schedule/chat tools override explicitly set to [].
+    tools = FakeToolService()
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tools)
+
+    _, stream = await service.run_stream(session_id="s1", message="echo x=1", tools=[])
+    async for _ in stream:
+        pass
+
+    assert tools.calls == []
+    # Confirms this short-circuited before ever asking the LLM to choose a
+    # tool (not just that the chosen one happened to be filtered out).
+    assert not any("Agent-enabled tools:" in prompt for prompt in llm.prompts)
+
+
+async def test_run_stream_with_no_tools_argument_allows_the_full_registry() -> None:
+    # The other half of the same distinction: omitting tools entirely (the
+    # default, used when an agent's own allowed_tools is empty - i.e.
+    # unrestricted) must still let a tool actually run.
+    tools = FakeToolService()
+    llm = FakeLLMProvider(tool_call={"name": "echo", "arguments": {"x": 1}})
+    service, *_ = _make_service(llm=llm, tool_registry=tools)
+
+    _, stream = await service.run_stream(session_id="s1", message="echo x=1")
+    async for _ in stream:
+        pass
+
+    assert tools.calls == [("echo", {"x": 1})]
+
+
 async def test_run_stream_skips_retrieval_for_smalltalk() -> None:
     retriever = FakeRetriever()
     service, *_ = _make_service(retriever=retriever)

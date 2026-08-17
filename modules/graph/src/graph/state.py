@@ -19,9 +19,15 @@ class AgentState(BaseModel):
         history: Prior turns in this conversation, oldest first.
         attachments: Extracted files attached to this turn.
         allowed_tools: Tool names execute_tools may consider this turn.
-            Empty (the default) means every registered tool is available -
-            see ``graph._execute_tools``. A name not in the registry just
-            means one less usable tool, the same as an unknown name
+            None (the default) means every registered tool is available;
+            an empty list means none are - see ``graph._execute_tools``.
+            The two are deliberately not the same value: callers that
+            resolve an agent's own empty ``allowed_tools`` (itself meaning
+            "unrestricted" - see ``shared.tools``) into a real turn must
+            pass ``None`` here, not ``[]``, or an unrelated caller
+            explicitly restricting to zero tools would collapse into the
+            same "everything allowed" behavior. A name not in the registry
+            just means one less usable tool, the same as an unknown name
             reaching ``ToolService.call_tool`` - not an error.
         context: Chunks retrieved by the retrieve_context node.
         tool_results: Results from tools run by the execute_tools node.
