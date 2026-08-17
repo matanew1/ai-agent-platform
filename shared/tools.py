@@ -21,9 +21,14 @@ def require_tools_subset(tools: list[str] | None, agent: Agent) -> None:
     """Raise unless every entry in ``tools`` is one of ``agent.allowed_tools``.
 
     ``tools=None`` means "no override" and always passes - the caller gets
-    the agent's full ``allowed_tools``, same as today.
+    the agent's full ``allowed_tools``, same as today. An agent with an
+    *empty* ``allowed_tools`` is itself unrestricted (see
+    ``agent.controller``/``AgentConfigPanel``'s "empty list means allow
+    all" convention), so there's no fixed universe to check a narrower
+    selection against - any ``tools`` value is trivially a subset of
+    "everything" and passes too.
     """
-    if tools is None:
+    if tools is None or not agent.allowed_tools:
         return
     unknown = sorted(set(tools) - set(agent.allowed_tools))
     if unknown:

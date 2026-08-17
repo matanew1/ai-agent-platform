@@ -152,6 +152,30 @@ def test_create_schedule_rejects_a_tool_the_agent_is_not_allowed() -> None:
     assert "shell_exec" in response.json()["detail"]
 
 
+def test_schedule_tools_are_unrestricted_for_an_agent_with_no_tool_allowlist() -> None:
+    # An agent's own empty allowed_tools means "no restriction" (see
+    # graph.graph._execute_tools's `if state.allowed_tools:` falsy-skip) -
+    # a schedule narrowing tools for such an agent has no fixed universe to
+    # be a "subset" of, so any selection is valid.
+    client, agent_service, _ids = _client()
+    unrestricted_agent = Agent(
+        id="agent-unrestricted", owner_id="owner-1", name="Unrestricted", system_prompt="Go."
+    )
+    agent_service.agents[unrestricted_agent.id] = unrestricted_agent
+
+    response = client.post(
+        f"/agents/{unrestricted_agent.id}/schedules",
+        json={
+            "title": "Daily digest",
+            "cron_expression": "0 8 * * *",
+            "trigger_message": "hi",
+            "tools": ["anything_at_all"],
+        },
+    )
+
+    assert response.status_code == 201
+
+
 def test_create_list_update_and_delete_a_schedule_round_trip() -> None:
     client, _agent_service, ids = _client()
     agent_id = ids["owned"]

@@ -650,6 +650,19 @@ def test_chat_stream_rejects_a_tools_override_the_agent_does_not_allow() -> None
     assert response.status_code == 422
 
 
+def test_chat_stream_tools_override_is_unrestricted_for_an_agent_with_no_allowlist() -> None:
+    client, *_ = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": []})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "tools": ["anything_at_all"]},
+    )
+
+    assert response.status_code == 200
+
+
 def test_ingest_owner_document_rejects_oversized_text() -> None:
     client, *_ = _client()
 
