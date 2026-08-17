@@ -63,10 +63,18 @@ class CreateScheduleRequest(BaseModel):
 
 
 class UpdateScheduleRequest(BaseModel):
-    """Editable fields for an existing schedule."""
+    """Editable fields for an existing schedule.
+
+    ``agent_id``, if present, moves the schedule to a different agent
+    the same caller owns - validated in ``automation.controller`` (the
+    request's URL path still names the schedule's *current* agent; this
+    field is the new target, see the controller's own docstring for the
+    ownership check and the tools-reconciliation that comes with a move).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    agent_id: str | None = Field(default=None, min_length=1)
     title: str | None = Field(default=None, min_length=1, max_length=_MAX_TITLE_CHARS)
     description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=120)

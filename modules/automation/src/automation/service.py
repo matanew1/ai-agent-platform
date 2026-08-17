@@ -86,6 +86,7 @@ class ScheduleService:
         owner_id: str,
         schedule_id: str,
         *,
+        agent_id: str | None = None,
         title: str | None = None,
         description: str | None | _UnsetType = _UNSET,
         cron_expression: str | None = None,
@@ -93,11 +94,20 @@ class ScheduleService:
         tools: list[str] | None | _UnsetType = _UNSET,
         enabled: bool | None = None,
     ) -> AgentSchedule | None:
-        """Apply a partial update, recomputing ``next_run_at`` on a cron change."""
+        """Apply a partial update, recomputing ``next_run_at`` on a cron change.
+
+        ``agent_id``, if given, moves the schedule - the caller
+        (``automation.controller``) has already verified both the current
+        and target agent belong to ``owner_id`` and reconciled ``tools``
+        against the target agent before this is called; this method just
+        writes whatever it's given.
+        """
         schedule = await self._repository.get(owner_id, schedule_id)
         if schedule is None:
             return None
         changes: dict[str, object] = {}
+        if agent_id is not None:
+            changes["agent_id"] = agent_id
         if title is not None:
             changes["title"] = title
         if description is not _UNSET:
