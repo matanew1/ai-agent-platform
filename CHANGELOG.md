@@ -12,6 +12,19 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.14.0](https://github.com/matanew1/ai-agent-platform/compare/v0.13.0...v0.14.0) (2026-08-17)
+
+
+### Added
+
+* **automation:** schedule title, description, and per-schedule tool scope ([873012e](https://github.com/matanew1/ai-agent-platform/commit/873012ee04e276b6069958c7e9d6d292ec8f3e93))
+
+
+### Fixed
+
+* **automation:** honor "empty allowed_tools = unrestricted" in tools checks ([7baaeb1](https://github.com/matanew1/ai-agent-platform/commit/7baaeb133c486e188c42027d103f7e8933b530c3))
+* **graph:** distinguish "no tool restriction" from "restricted to zero tools" ([b11dc73](https://github.com/matanew1/ai-agent-platform/commit/b11dc73944c8609493fd85b46ebe1524afe79d18))
+
 ## [0.13.0](https://github.com/matanew1/ai-agent-platform/compare/v0.12.3...v0.13.0) (2026-08-16)
 
 
