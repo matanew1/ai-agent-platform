@@ -18,24 +18,28 @@ from infrastructure.errors import CacheError
 from shared.types import Agent
 
 
-def _schedule(schedule_id: str, *, agent_id: str = "agent-1") -> AgentSchedule:
+def _schedule(
+    schedule_id: str, *, agent_id: str = "agent-1", tools: list[str] | None = None
+) -> AgentSchedule:
     return AgentSchedule(
         id=schedule_id,
         owner_id="owner-1",
         agent_id=agent_id,
+        title="Daily digest",
         cron_expression="*/5 * * * *",
         trigger_message="Summarize yesterday's activity.",
+        tools=tools,
         next_run_at=datetime.now(UTC) - timedelta(minutes=1),
     )
 
 
-def _agent(agent_id: str = "agent-1") -> Agent:
+def _agent(agent_id: str = "agent-1", allowed_tools: list[str] | None = None) -> Agent:
     return Agent(
         id=agent_id,
         owner_id="owner-1",
         name="Daily Summarizer",
         system_prompt="You summarize things.",
-        allowed_tools=[],
+        allowed_tools=allowed_tools or [],
     )
 
 
@@ -138,6 +142,36 @@ async def test_fire_due_runs_a_turn_and_records_it() -> None:
     assert call["message"] == schedule.trigger_message
     assert call["session_id"].startswith("owner-1:agent-1:scheduled-sched-1-")
     assert schedules.recorded_runs == [("sched-1", call["session_id"])]
+
+
+async def test_fire_due_uses_the_agents_allowed_tools_when_the_schedule_has_no_override() -> None:
+    schedules = _FakeSchedules(due=[_schedule("sched-1")])
+    chat_service = _FakeChatService()
+    runner = ScheduleRunner(
+        schedules=schedules,  # type: ignore[arg-type]
+        agents=_FakeAgents({"agent-1": _agent(allowed_tools=["fetch", "extract_pdf"])}),  # type: ignore[arg-type]
+        chat_service_factory=lambda agent: chat_service,
+        cache=_FakeCache(),  # type: ignore[arg-type]
+    )
+
+    await runner._fire_due()
+
+    assert chat_service.calls[0]["tools"] == ["fetch", "extract_pdf"]
+
+
+async def test_fire_due_narrows_to_the_schedules_own_tools_override() -> None:
+    schedules = _FakeSchedules(due=[_schedule("sched-1", tools=["extract_pdf"])])
+    chat_service = _FakeChatService()
+    runner = ScheduleRunner(
+        schedules=schedules,  # type: ignore[arg-type]
+        agents=_FakeAgents({"agent-1": _agent(allowed_tools=["fetch", "extract_pdf"])}),  # type: ignore[arg-type]
+        chat_service_factory=lambda agent: chat_service,
+        cache=_FakeCache(),  # type: ignore[arg-type]
+    )
+
+    await runner._fire_due()
+
+    assert chat_service.calls[0]["tools"] == ["extract_pdf"]
 
 
 async def test_fire_due_skips_a_schedule_whose_agent_was_deleted() -> None:

@@ -26,6 +26,7 @@ from fastapi.responses import StreamingResponse
 
 from shared.auth import AuthenticatedUser
 from shared.documents import extract_document_text
+from shared.tools import ToolsNotAllowedError, require_tools_subset
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -78,6 +79,12 @@ async def stream_with_agent(
     definition = await definitions.get(current_user.id, agent_id)
     if definition is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    try:
+        require_tools_subset(payload.tools, definition)
+    except ToolsNotAllowedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     decoded_attachments: list[tuple[str, bytes]] = []
     for attachment in payload.files:
         try:
@@ -117,7 +124,7 @@ async def stream_with_agent(
     metadata, stream = await chat_service.run_stream(
         session_id=f"{current_user.id}:{agent_id}:{payload.session_id}",
         message=payload.message,
-        tools=definition.allowed_tools,
+        tools=payload.tools if payload.tools is not None else definition.allowed_tools,
         attachments=attachments,
     )
     artifact_service: ArtifactService = request.app.state.artifact_service

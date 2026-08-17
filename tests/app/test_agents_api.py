@@ -149,6 +149,7 @@ class _ChatService:
 
     def __init__(self) -> None:
         self.received_attachments: list[tuple[str, str]] | None = None
+        self.received_tools: list[str] | None = None
 
     async def run_stream(
         self,
@@ -158,6 +159,7 @@ class _ChatService:
         attachments: list[tuple[str, str]] | None = None,
     ) -> tuple[ChatStreamMetadata, AsyncIterator[str]]:
         self.received_attachments = attachments
+        self.received_tools = tools
 
         async def _stream() -> AsyncIterator[str]:
             yield "ok"
@@ -616,6 +618,33 @@ def test_chat_stream_rejects_more_attachments_than_the_cap() -> None:
     response = client.post(
         f"/agents/{agent_id}/chat/stream",
         json={"session_id": "s1", "message": "hi", "files": files},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_stream_lets_the_caller_narrow_tools_for_one_turn() -> None:
+    client, _document_index, chat_service = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": ["fetch"]})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "tools": []},
+    )
+
+    assert response.status_code == 200
+    assert chat_service.received_tools == []
+
+
+def test_chat_stream_rejects_a_tools_override_the_agent_does_not_allow() -> None:
+    client, *_ = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": ["fetch"]})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "tools": ["not_a_real_tool"]},
     )
 
     assert response.status_code == 422

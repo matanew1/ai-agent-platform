@@ -101,9 +101,16 @@ class ScheduleRunner:
         session_id = (
             f"{schedule.owner_id}:{schedule.agent_id}:scheduled-{schedule.id}-{uuid4().hex}"
         )
+        # schedule.tools narrows the agent's own allowed_tools for this one
+        # schedule (validated as a subset at write time - see
+        # automation.controller._require_tools_subset); None means "use
+        # whatever the agent itself is allowed", the same as an interactive
+        # turn gets via chat.controller.
         chat_service = self._chat_service_factory(agent=agent)
         _, stream = await chat_service.run_stream(
-            session_id=session_id, message=schedule.trigger_message, tools=agent.allowed_tools
+            session_id=session_id,
+            message=schedule.trigger_message,
+            tools=schedule.tools if schedule.tools is not None else agent.allowed_tools,
         )
 
         # 3. Drain the stream to trigger the turn's checkpoint save and lock release.

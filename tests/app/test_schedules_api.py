@@ -74,7 +74,13 @@ class _ScheduleRepository(ScheduleRepository):
 def _client() -> tuple[TestClient, _AgentService, dict[str, str]]:
     app = FastAPI()
     agent_service = _AgentService()
-    agent = Agent(id="agent-1", owner_id="owner-1", name="Daily Digest", system_prompt="Summarize.")
+    agent = Agent(
+        id="agent-1",
+        owner_id="owner-1",
+        name="Daily Digest",
+        system_prompt="Summarize.",
+        allowed_tools=["fetch", "extract_pdf"],
+    )
     other_owner_agent = Agent(
         id="agent-2", owner_id="owner-2", name="Someone else's", system_prompt="Summarize."
     )
@@ -100,7 +106,11 @@ def test_schedule_routes_require_a_session_cookie() -> None:
 
 def test_schedule_routes_404_for_an_agent_the_caller_does_not_own() -> None:
     client, _agent_service, ids = _client()
-    valid_create_body = {"cron_expression": "0 8 * * *", "trigger_message": "hi"}
+    valid_create_body = {
+        "title": "Daily digest",
+        "cron_expression": "0 8 * * *",
+        "trigger_message": "hi",
+    }
 
     for path, method, body in (
         ("", "GET", {}),
@@ -119,10 +129,27 @@ def test_create_schedule_rejects_an_invalid_cron_expression() -> None:
 
     response = client.post(
         f"/agents/{ids['owned']}/schedules",
-        json={"cron_expression": "not a cron", "trigger_message": "hi"},
+        json={"title": "Daily digest", "cron_expression": "not a cron", "trigger_message": "hi"},
     )
 
     assert response.status_code == 422
+
+
+def test_create_schedule_rejects_a_tool_the_agent_is_not_allowed() -> None:
+    client, _agent_service, ids = _client()
+
+    response = client.post(
+        f"/agents/{ids['owned']}/schedules",
+        json={
+            "title": "Daily digest",
+            "cron_expression": "0 8 * * *",
+            "trigger_message": "hi",
+            "tools": ["fetch", "shell_exec"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "shell_exec" in response.json()["detail"]
 
 
 def test_create_list_update_and_delete_a_schedule_round_trip() -> None:
@@ -131,11 +158,20 @@ def test_create_list_update_and_delete_a_schedule_round_trip() -> None:
 
     created = client.post(
         f"/agents/{agent_id}/schedules",
-        json={"cron_expression": "0 8 * * *", "trigger_message": "Summarize yesterday."},
+        json={
+            "title": "Daily digest",
+            "description": "Summarizes yesterday's activity every morning.",
+            "cron_expression": "0 8 * * *",
+            "trigger_message": "Summarize yesterday.",
+            "tools": ["fetch"],
+        },
     )
     assert created.status_code == 201
     schedule_id = created.json()["id"]
     assert created.json()["enabled"] is True
+    assert created.json()["title"] == "Daily digest"
+    assert created.json()["description"] == "Summarizes yesterday's activity every morning."
+    assert created.json()["tools"] == ["fetch"]
 
     listed = client.get(f"/agents/{agent_id}/schedules")
     assert [item["id"] for item in listed.json()] == [schedule_id]
@@ -144,9 +180,25 @@ def test_create_list_update_and_delete_a_schedule_round_trip() -> None:
     assert fetched.status_code == 200
     assert fetched.json()["cron_expression"] == "0 8 * * *"
 
-    updated = client.patch(f"/agents/{agent_id}/schedules/{schedule_id}", json={"enabled": False})
+    updated = client.patch(
+        f"/agents/{agent_id}/schedules/{schedule_id}",
+        json={"enabled": False, "title": "Daily digest (paused)"},
+    )
     assert updated.status_code == 200
     assert updated.json()["enabled"] is False
+    assert updated.json()["title"] == "Daily digest (paused)"
+
+    cleared = client.patch(
+        f"/agents/{agent_id}/schedules/{schedule_id}", json={"tools": None, "description": None}
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["tools"] is None
+    assert cleared.json()["description"] is None
+
+    rejected = client.patch(
+        f"/agents/{agent_id}/schedules/{schedule_id}", json={"tools": ["shell_exec"]}
+    )
+    assert rejected.status_code == 422
 
     deleted = client.delete(f"/agents/{agent_id}/schedules/{schedule_id}")
     assert deleted.status_code == 204
@@ -165,7 +217,7 @@ def test_a_schedule_is_not_reachable_through_a_sibling_agent_it_does_not_belong_
 
     created = client.post(
         f"/agents/{owned_agent_id}/schedules",
-        json={"cron_expression": "0 8 * * *", "trigger_message": "hi"},
+        json={"title": "Daily digest", "cron_expression": "0 8 * * *", "trigger_message": "hi"},
     )
     schedule_id = created.json()["id"]
 
