@@ -229,6 +229,92 @@ def test_create_list_update_and_delete_a_schedule_round_trip() -> None:
     assert client.get(f"/agents/{agent_id}/schedules/{schedule_id}").status_code == 404
 
 
+def test_update_can_move_a_schedule_to_a_different_owned_agent() -> None:
+    client, agent_service, ids = _client()
+    source_agent_id = ids["owned"]
+    target_agent = Agent(
+        id="agent-target",
+        owner_id="owner-1",
+        name="Target agent",
+        system_prompt="Go.",
+        allowed_tools=["fetch"],
+    )
+    agent_service.agents[target_agent.id] = target_agent
+
+    created = client.post(
+        f"/agents/{source_agent_id}/schedules",
+        json={"title": "Daily digest", "cron_expression": "0 8 * * *", "trigger_message": "hi"},
+    )
+    schedule_id = created.json()["id"]
+
+    moved = client.patch(
+        f"/agents/{source_agent_id}/schedules/{schedule_id}",
+        json={"agent_id": target_agent.id},
+    )
+
+    assert moved.status_code == 200
+    assert moved.json()["agent_id"] == target_agent.id
+    # No longer reachable under the old agent...
+    assert client.get(f"/agents/{source_agent_id}/schedules/{schedule_id}").status_code == 404
+    assert client.get(f"/agents/{source_agent_id}/schedules").json() == []
+    # ...but is under the new one.
+    assert client.get(f"/agents/{target_agent.id}/schedules/{schedule_id}").status_code == 200
+    assert [item["id"] for item in client.get(f"/agents/{target_agent.id}/schedules").json()] == [
+        schedule_id
+    ]
+
+
+def test_update_rejects_moving_a_schedule_to_an_agent_the_caller_does_not_own() -> None:
+    client, _agent_service, ids = _client()
+    created = client.post(
+        f"/agents/{ids['owned']}/schedules",
+        json={"title": "Daily digest", "cron_expression": "0 8 * * *", "trigger_message": "hi"},
+    )
+    schedule_id = created.json()["id"]
+
+    response = client.patch(
+        f"/agents/{ids['owned']}/schedules/{schedule_id}",
+        json={"agent_id": ids["not_owned"]},
+    )
+
+    assert response.status_code == 404
+    # The schedule wasn't moved.
+    assert client.get(f"/agents/{ids['owned']}/schedules/{schedule_id}").status_code == 200
+
+
+def test_update_resets_incompatible_tools_instead_of_blocking_a_move() -> None:
+    client, agent_service, ids = _client()
+    source_agent_id = ids["owned"]  # allowed_tools=["fetch", "extract_pdf"]
+    restrictive_agent = Agent(
+        id="agent-restrictive",
+        owner_id="owner-1",
+        name="Restrictive",
+        system_prompt="Go.",
+        allowed_tools=["extract_pdf"],  # doesn't include "fetch"
+    )
+    agent_service.agents[restrictive_agent.id] = restrictive_agent
+
+    created = client.post(
+        f"/agents/{source_agent_id}/schedules",
+        json={
+            "title": "Daily digest",
+            "cron_expression": "0 8 * * *",
+            "trigger_message": "hi",
+            "tools": ["fetch"],
+        },
+    )
+    schedule_id = created.json()["id"]
+
+    moved = client.patch(
+        f"/agents/{source_agent_id}/schedules/{schedule_id}",
+        json={"agent_id": restrictive_agent.id},
+    )
+
+    assert moved.status_code == 200
+    assert moved.json()["agent_id"] == restrictive_agent.id
+    assert moved.json()["tools"] is None
+
+
 def test_a_schedule_is_not_reachable_through_a_sibling_agent_it_does_not_belong_to() -> None:
     client, agent_service, ids = _client()
     owned_agent_id = ids["owned"]

@@ -146,6 +146,23 @@ async def test_update_can_clear_description_and_tools_back_to_unset() -> None:
     assert cleared.tools is None
 
 
+async def test_update_can_move_a_schedule_to_a_different_agent() -> None:
+    repository = _FakeScheduleRepository()
+    service = ScheduleService(repository)
+    schedule = await service.create(
+        owner_id="owner-1",
+        agent_id="agent-1",
+        title="Daily digest",
+        cron_expression="0 8 * * *",
+        trigger_message="hi",
+    )
+
+    moved = await service.update("owner-1", schedule.id, agent_id="agent-2")
+
+    assert moved is not None
+    assert moved.agent_id == "agent-2"
+
+
 async def test_update_returns_none_for_an_unknown_schedule() -> None:
     service = ScheduleService(_FakeScheduleRepository())
 
