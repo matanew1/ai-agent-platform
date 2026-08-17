@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.15.0](https://github.com/matanew1/ai-agent-platform/compare/v0.14.0...v0.15.0) (2026-08-17)
+
+
+### Added
+
+* **automation:** move a schedule to a different owned agent ([43eaef5](https://github.com/matanew1/ai-agent-platform/commit/43eaef534adbeffbfac25534cc4106472470dab7))
+
 ## [0.14.0](https://github.com/matanew1/ai-agent-platform/compare/v0.13.0...v0.14.0) (2026-08-17)
 
 
