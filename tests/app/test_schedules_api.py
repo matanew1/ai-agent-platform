@@ -315,6 +315,72 @@ def test_update_resets_incompatible_tools_instead_of_blocking_a_move() -> None:
     assert moved.json()["tools"] is None
 
 
+def test_update_rejects_an_explicit_tools_override_incompatible_with_a_move_target() -> None:
+    # The implicit-reset behavior above only applies when `tools` is left
+    # out of the payload. Sending `tools` explicitly alongside `agent_id`
+    # takes the other branch in automation.controller.update_schedule - it's
+    # validated against the *target* agent and blocked with 422, same as an
+    # incompatible tools list on a plain (non-move) update.
+    client, agent_service, ids = _client()
+    source_agent_id = ids["owned"]  # allowed_tools=["fetch", "extract_pdf"]
+    restrictive_agent = Agent(
+        id="agent-restrictive",
+        owner_id="owner-1",
+        name="Restrictive",
+        system_prompt="Go.",
+        allowed_tools=["extract_pdf"],  # doesn't include "fetch"
+    )
+    agent_service.agents[restrictive_agent.id] = restrictive_agent
+
+    created = client.post(
+        f"/agents/{source_agent_id}/schedules",
+        json={"title": "Daily digest", "cron_expression": "0 8 * * *", "trigger_message": "hi"},
+    )
+    schedule_id = created.json()["id"]
+
+    moved = client.patch(
+        f"/agents/{source_agent_id}/schedules/{schedule_id}",
+        json={"agent_id": restrictive_agent.id, "tools": ["fetch"]},
+    )
+
+    assert moved.status_code == 422
+    # The move itself must not have gone through with an invalid payload.
+    assert client.get(f"/agents/{source_agent_id}/schedules/{schedule_id}").status_code == 200
+
+
+def test_update_preserves_tools_still_compatible_with_a_move_target() -> None:
+    client, agent_service, ids = _client()
+    source_agent_id = ids["owned"]  # allowed_tools=["fetch", "extract_pdf"]
+    compatible_agent = Agent(
+        id="agent-compatible",
+        owner_id="owner-1",
+        name="Compatible",
+        system_prompt="Go.",
+        allowed_tools=["fetch", "extract_pdf", "extract_markdown"],
+    )
+    agent_service.agents[compatible_agent.id] = compatible_agent
+
+    created = client.post(
+        f"/agents/{source_agent_id}/schedules",
+        json={
+            "title": "Daily digest",
+            "cron_expression": "0 8 * * *",
+            "trigger_message": "hi",
+            "tools": ["fetch"],
+        },
+    )
+    schedule_id = created.json()["id"]
+
+    moved = client.patch(
+        f"/agents/{source_agent_id}/schedules/{schedule_id}",
+        json={"agent_id": compatible_agent.id},
+    )
+
+    assert moved.status_code == 200
+    assert moved.json()["agent_id"] == compatible_agent.id
+    assert moved.json()["tools"] == ["fetch"]
+
+
 def test_a_schedule_is_not_reachable_through_a_sibling_agent_it_does_not_belong_to() -> None:
     client, agent_service, ids = _client()
     owned_agent_id = ids["owned"]

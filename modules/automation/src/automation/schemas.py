@@ -74,7 +74,7 @@ class UpdateScheduleRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    agent_id: str | None = None
+    agent_id: str | None = Field(default=None, min_length=1)
     title: str | None = Field(default=None, min_length=1, max_length=_MAX_TITLE_CHARS)
     description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=120)
