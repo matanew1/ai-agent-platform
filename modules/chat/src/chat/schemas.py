@@ -30,6 +30,12 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str = Field(max_length=MAX_CHAT_MESSAGE_CHARS)
     files: list[ChatFileAttachment] = Field(default_factory=list, max_length=MAX_CHAT_ATTACHMENTS)
+    # None (the default) means "use the agent's own allowed_tools", same as
+    # before this field existed. A caller may narrow it for one turn (e.g.
+    # the schedule editor's "test message" preview honoring a schedule's own
+    # tools override), never widen beyond allowed_tools - validated in
+    # chat.controller via shared.tools.require_tools_subset.
+    tools: list[str] | None = None
 
 
 __all__ = ["ChatFileAttachment", "ChatRequest"]

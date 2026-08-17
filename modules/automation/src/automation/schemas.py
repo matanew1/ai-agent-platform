@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from shared.limits import MAX_CHAT_MESSAGE_CHARS
 
+_MAX_TITLE_CHARS = 200
+_MAX_DESCRIPTION_CHARS = 1000
+
 
 class AgentSchedule(BaseModel):
     """A cron-triggered unattended run configured for one owned agent.
@@ -25,11 +28,20 @@ class AgentSchedule(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     owner_id: str
     agent_id: str
+    title: str = Field(min_length=1, max_length=_MAX_TITLE_CHARS)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     cron_expression: str = Field(min_length=1, max_length=120)
     # trigger_message becomes a ChatService.run_stream message just like an
     # interactive turn (see automation.runner), so it reuses the same bound
     # rather than inventing a second, drifting number - see shared/limits.py.
     trigger_message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    # None means "use the agent's own allowed_tools at fire time" - a
+    # non-None value narrows that set for this schedule only, and is
+    # validated as a subset of the agent's allowed_tools at the one place
+    # that already has the agent loaded to check against - see
+    # automation.controller's docstring on why that validation lives there
+    # rather than here or in ScheduleService.
+    tools: list[str] | None = None
     enabled: bool = True
     next_run_at: datetime
     last_run_at: datetime | None = None
@@ -43,8 +55,11 @@ class CreateScheduleRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    title: str = Field(min_length=1, max_length=_MAX_TITLE_CHARS)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     cron_expression: str = Field(min_length=1, max_length=120)
     trigger_message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+    tools: list[str] | None = None
 
 
 class UpdateScheduleRequest(BaseModel):
@@ -52,10 +67,13 @@ class UpdateScheduleRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    title: str | None = Field(default=None, min_length=1, max_length=_MAX_TITLE_CHARS)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_CHARS)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=120)
     trigger_message: str | None = Field(
         default=None, min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS
     )
+    tools: list[str] | None = None
     enabled: bool | None = None
 
 
@@ -64,8 +82,11 @@ class ScheduleResponse(BaseModel):
 
     id: str
     agent_id: str
+    title: str
+    description: str | None
     cron_expression: str
     trigger_message: str
+    tools: list[str] | None
     enabled: bool
     next_run_at: datetime
     last_run_at: datetime | None

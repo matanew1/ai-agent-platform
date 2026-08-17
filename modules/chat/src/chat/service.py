@@ -245,7 +245,10 @@ class ChatService:
                     input=message,
                     history=history,
                     attachments=attachments or [],
-                    allowed_tools=tools or [],
+                    # Preserve None vs [] - collapsing them here would undo
+                    # the same "no restriction" vs "restricted to nothing"
+                    # distinction AgentGraph._execute_tools now depends on.
+                    allowed_tools=tools,
                 )
             )
         except BaseException:

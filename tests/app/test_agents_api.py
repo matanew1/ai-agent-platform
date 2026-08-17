@@ -149,6 +149,7 @@ class _ChatService:
 
     def __init__(self) -> None:
         self.received_attachments: list[tuple[str, str]] | None = None
+        self.received_tools: list[str] | None = None
 
     async def run_stream(
         self,
@@ -158,6 +159,7 @@ class _ChatService:
         attachments: list[tuple[str, str]] | None = None,
     ) -> tuple[ChatStreamMetadata, AsyncIterator[str]]:
         self.received_attachments = attachments
+        self.received_tools = tools
 
         async def _stream() -> AsyncIterator[str]:
             yield "ok"
@@ -619,6 +621,65 @@ def test_chat_stream_rejects_more_attachments_than_the_cap() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_chat_stream_lets_the_caller_narrow_tools_for_one_turn() -> None:
+    client, _document_index, chat_service = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": ["fetch"]})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "tools": []},
+    )
+
+    assert response.status_code == 200
+    assert chat_service.received_tools == []
+
+
+def test_chat_stream_rejects_a_tools_override_the_agent_does_not_allow() -> None:
+    client, *_ = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": ["fetch"]})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "tools": ["not_a_real_tool"]},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_stream_tools_override_is_unrestricted_for_an_agent_with_no_allowlist() -> None:
+    client, *_ = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": []})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream",
+        json={"session_id": "s1", "message": "hi", "tools": ["anything_at_all"]},
+    )
+
+    assert response.status_code == 200
+
+
+def test_chat_stream_resolves_no_override_on_an_unrestricted_agent_to_none_not_empty_list() -> None:
+    # An agent's own allowed_tools=[] means "unrestricted" (see
+    # shared.tools/AgentConfigPanel's "empty means allow all" convention).
+    # The resolved tools argument reaching ChatService.run_stream must be
+    # None, not [], or graph.graph._execute_tools would treat "no override"
+    # the same as "restrict to zero tools" - the exact bug this schema
+    # change (tools) introduced and then fixed.
+    client, _document_index, chat_service = _client()
+    client.post("/agents", json={"name": "R", "allowed_tools": []})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/chat/stream", json={"session_id": "s1", "message": "hi"}
+    )
+
+    assert response.status_code == 200
+    assert chat_service.received_tools is None
 
 
 def test_ingest_owner_document_rejects_oversized_text() -> None:
