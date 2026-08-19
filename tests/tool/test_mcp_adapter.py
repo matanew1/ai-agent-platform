@@ -45,7 +45,7 @@ def _remote_tool(name: str = "fetch", description: str = "Fetch a URL.") -> Tool
 async def test_list_tools_exposes_remote_tool_definitions() -> None:
     session = FakeClientSession(tools=[_remote_tool()], results={})
 
-    tools = await McpServerAdapter(session).list_tools()
+    tools = await McpServerAdapter(session, "fetch").list_tools()
 
     assert len(tools) == 1
     assert tools[0].definition.name == "fetch"
@@ -54,6 +54,19 @@ async def test_list_tools_exposes_remote_tool_definitions() -> None:
         "type": "object",
         "properties": {"url": {"type": "string"}},
     }
+    assert tools[0].definition.source == "fetch"
+
+
+async def test_list_tools_stamps_the_adapter_s_server_name_as_source() -> None:
+    """Every tool from one server carries that server's mcp-servers.yaml key, for
+    the web UI's Tool Registry grouping (source is display metadata only, not sent
+    to the LLM - see ToolDefinition.source's docstring).
+    """
+    session = FakeClientSession(tools=[_remote_tool(name="get_current_time")], results={})
+
+    (tool,) = await McpServerAdapter(session, "time").list_tools()
+
+    assert tool.definition.source == "time"
 
 
 async def test_adapted_tool_calls_the_remote_tool_and_flattens_text_content() -> None:
@@ -65,7 +78,7 @@ async def test_adapted_tool_calls_the_remote_tool_and_flattens_text_content() ->
             )
         },
     )
-    (tool,) = await McpServerAdapter(session).list_tools()
+    (tool,) = await McpServerAdapter(session, "fetch").list_tools()
 
     result = await tool.handler(url="https://example.com")
 
@@ -86,7 +99,7 @@ async def test_adapted_tool_raises_when_the_remote_tool_reports_an_error() -> No
             )
         },
     )
-    (tool,) = await McpServerAdapter(session).list_tools()
+    (tool,) = await McpServerAdapter(session, "fetch").list_tools()
 
     with pytest.raises(RuntimeError, match="fetch failed: 404"):
         await tool.handler(url="https://example.com/missing")
@@ -106,7 +119,7 @@ async def test_arguments_reach_the_remote_tool_exactly_as_the_agent_passed_them(
             )
         },
     )
-    (tool,) = await McpServerAdapter(session).list_tools()
+    (tool,) = await McpServerAdapter(session, "fetch").list_tools()
 
     await tool.handler(url="https://example.com", raw=True)
 
@@ -126,7 +139,7 @@ async def test_adapted_tool_joins_multiple_text_blocks_into_a_list() -> None:
             )
         },
     )
-    (tool,) = await McpServerAdapter(session).list_tools()
+    (tool,) = await McpServerAdapter(session, "fetch").list_tools()
 
     result = await tool.handler(url="https://example.com")
 

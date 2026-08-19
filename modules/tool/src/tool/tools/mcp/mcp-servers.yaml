@@ -70,20 +70,65 @@ time:
   command: uvx
   args: ["--with", "mcp==1.9.4", "mcp-server-time"]
 
-duckduckgo:
-  # Free, keyless web search. The server exposes text, news, image, video,
-  # and AI-chat search tools through DuckDuckGo. It is a community server,
-  # not an official DuckDuckGo integration, so pin the package version and
-  # test it periodically for upstream search-result changes or rate limits.
+tavily:
+  # Web search, replacing the earlier `duckduckgo` (ddg-mcp) entry. ddg-mcp
+  # was community/unofficial and this repo's own measured accuracy table
+  # (tool-conventions.md) showed its search tool selected 0/3 even on an
+  # explicit "search the web for..." prompt, while also dragging
+  # get_current_time down from 3/3 to 1/3 - the worst numbers of anything
+  # measured in this file. Tavily is built specifically for LLM/agent
+  # consumption (pre-summarized, structured results, not scraped HTML) and
+  # is an official, actively maintained package - worth the tradeoff of
+  # needing an API key where ddg-mcp needed none.
   #
-  # ddg-mcp's permissive ``mcp>=1.3.0`` dependency otherwise resolves a
-  # newer incompatible SDK: it uses the removed ``Server.list_resources``
-  # decorator and exits before the MCP handshake. Pin its isolated
-  # subprocess to mcp 1.9.4, as for the other Python servers above.
-  # ``--from`` installs exactly this package and runs its ``ddg-mcp`` console
-  # entry point; no API key, account, or payment details are needed.
-  command: uvx
-  args: ["--with", "mcp==1.9.4", "--from", "ddg-mcp==0.1.1", "ddg-mcp"]
+  # Freemium: free tier is 1,000 searches/month, no payment details needed
+  # to obtain a key at https://app.tavily.com. Node/npm package, like
+  # `filesystem` below - no Python equivalent, so no `--with mcp==1.9.4`
+  # pin applies here (that gotcha is specific to the Python servers above).
+  #
+  # TAVILY_API_KEY is a secret and does not live in this file - it's read
+  # from the process environment (.env.dev/.env.prod) via the ${VAR_NAME}
+  # syntax `tool/adapters/mcp/config.py::_resolve_env` substitutes at load
+  # time. Set TAVILY_API_KEY there before this server will start.
+  #
+  # Accuracy not yet measured against this repo's standard 3-trial table -
+  # see tool-conventions.md "Servers evaluated" for the pending entry.
+  command: npx
+  args: ["-y", "tavily-mcp@latest"]
+  env:
+    TAVILY_API_KEY: "${TAVILY_API_KEY}"
+
+filesystem:
+  # The official Filesystem MCP server: read_file, read_multiple_files,
+  # list_directory, directory_tree, search_files, get_file_info, plus
+  # WRITE tools - write_file, edit_file, create_directory, move_file. Unlike
+  # every other server in this file it's an npm package, not a uvx/PyPI one
+  # (no Python equivalent exists), so it needs Node/npx instead of the
+  # `--with mcp==1.9.4` uvx pin the others need - sanity-checked live and it
+  # starts clean under the current npx/mcp SDK versions, no pin required.
+  #
+  # This is the same fetch-pairs-with-a-mutating-tool risk
+  # .claude/rules/tool-conventions.md declined `git` and `workos` for:
+  # `fetch` already pipes attacker-controlled web text into the model's
+  # prompt, and this server's write tools give a prompt-injected turn a
+  # path to write local files. There's no read-only flag to make the write
+  # tools disappear from what's registered - the actual mitigation here is
+  # the scoped directory below being a dedicated, empty, throwaway folder
+  # with nothing of value in it, not tool filtering. Do not repoint this at
+  # the repo, $HOME, or anything containing real data.
+  #
+  # The directory is a required env var, not a literal path, for the same
+  # reason TAVILY_API_KEY above is: this file is committed and shared by
+  # every clone, and a directory that's the sole boundary around a
+  # write-capable, prompt-injection-reachable tool must not be one
+  # developer's home-folder layout baked into it. `config.py::load_servers`
+  # resolves `${VAR_NAME}` in `args` the same way it already does for `env`
+  # values - an unset AGENT_FILES_DIR skips just this server, same as a
+  # missing TAVILY_API_KEY skips just `tavily`. Set AGENT_FILES_DIR in
+  # .env.dev/.env.prod to a dedicated, empty, throwaway directory before
+  # this server will start.
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "${AGENT_FILES_DIR}"]
 
 # Two more servers were evaluated here and deliberately not enabled -
 # sqlite (structured data) and git (repo awareness). Both connect fine and

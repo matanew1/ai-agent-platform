@@ -29,12 +29,13 @@ class McpServerAdapter:
     same treatment ``.claude/rules/testing.md`` gives every other adapter).
     """
 
-    def __init__(self, session: ClientSession) -> None:
+    def __init__(self, session: ClientSession, server_name: str) -> None:
         self._session = session
+        self._server_name = server_name
 
     @classmethod
     async def connect(
-        cls, server_params: StdioServerParameters, exit_stack: AsyncExitStack
+        cls, server_params: StdioServerParameters, exit_stack: AsyncExitStack, server_name: str
     ) -> McpServerAdapter:
         """Open a stdio connection to an MCP server and initialize it.
 
@@ -46,13 +47,16 @@ class McpServerAdapter:
         Args:
             server_params: Which process to spawn and how.
             exit_stack: Keeps the connection open past this call.
+            server_name: The server's ``mcp-servers.yaml`` key (e.g.
+                ``"fetch"``) - stamped onto every ``ToolDefinition`` this
+                adapter produces as ``source``, for UI grouping.
         """
         read_stream, write_stream = await exit_stack.enter_async_context(
             stdio_client(server_params)
         )
         session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
         await session.initialize()
-        return cls(session)
+        return cls(session, server_name)
 
     async def list_tools(self) -> list[RegisteredTool]:
         """List this server's tools, each adapted into a ``RegisteredTool``."""
@@ -89,6 +93,7 @@ class McpServerAdapter:
                 name=remote_tool.name,
                 description=remote_tool.description or "",
                 parameters=remote_tool.input_schema or {},
+                source=self._server_name,
             ),
             handler=handler,
         )
