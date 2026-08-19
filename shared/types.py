@@ -71,11 +71,18 @@ class ToolDefinition(BaseModel):
             the LLM uses to decide whether to call the tool - keep it
             complete, per ``.claude/rules/tool-conventions.md``.
         parameters: JSON-schema-shaped description of the tool's arguments.
+        source: Where the tool comes from - ``"local"`` for an in-process
+            Python tool, or the MCP server's ``mcp-servers.yaml`` key (e.g.
+            ``"fetch"``, ``"tavily"``) for one adapted from an external
+            server. Display/grouping metadata only - not sent to the LLM
+            (``shared.prompt_formatters.format_tools`` picks fields
+            explicitly and doesn't include it).
     """
 
     name: str
     description: str
     parameters: dict[str, object] = Field(default_factory=dict)
+    source: str = "local"
 
 
 class ToolResult(BaseModel):
@@ -185,3 +192,24 @@ class Agent(BaseModel):
     version: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class Page[Item](BaseModel):
+    """One page of a longer list, with enough metadata for the client to page further.
+
+    The shared envelope for every paginated ``GET`` list route - see
+    ``shared.limits.DEFAULT_PAGE_LIMIT``/``MAX_PAGE_LIMIT`` for the ``limit``
+    bounds every such route enforces on its own ``?limit=``/``?offset=``
+    query params.
+
+    Attributes:
+        items: This page's items, in the same order the full list uses.
+        total: Total number of items across every page, not just this one.
+        limit: The page size that was requested (after bounds are applied).
+        offset: How many items were skipped before this page started.
+    """
+
+    items: list[Item]
+    total: int
+    limit: int
+    offset: int

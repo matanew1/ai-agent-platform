@@ -42,10 +42,19 @@ MAX_CHAT_MESSAGE_CHARS = 20_000
 # than exact: the file-upload cap is the more conservative reference point.
 MAX_DOCUMENT_TEXT_CHARS = MAX_DOCUMENT_BYTES
 
+# Shared bounds for a paginated GET's ?limit=/?offset= query params
+# (shared.types.Page) - a client requesting an unbounded page size is the
+# same class of cost/availability lever as an unbounded upload, just on the
+# read path instead of the write path.
+DEFAULT_PAGE_LIMIT = 20
+MAX_PAGE_LIMIT = 100
+
 __all__ = [
+    "DEFAULT_PAGE_LIMIT",
     "MAX_ATTACHMENT_BASE64_CHARS",
     "MAX_CHAT_ATTACHMENTS",
     "MAX_CHAT_MESSAGE_CHARS",
     "MAX_DOCUMENT_BYTES",
     "MAX_DOCUMENT_TEXT_CHARS",
+    "MAX_PAGE_LIMIT",
 ]
