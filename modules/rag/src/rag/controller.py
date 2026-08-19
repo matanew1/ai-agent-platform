@@ -12,34 +12,50 @@ import asyncio
 from typing import Annotated
 
 from authentication.controller import current_user
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
 from rag.schemas import DocumentResponse, IngestDocumentRequest, IngestDocumentResponse
 from rag.service import RAGService
 
 from shared.auth import AuthenticatedUser
 from shared.documents import extract_document_text
-from shared.limits import MAX_DOCUMENT_BYTES
+from shared.limits import DEFAULT_PAGE_LIMIT, MAX_DOCUMENT_BYTES, MAX_PAGE_LIMIT
+from shared.types import Page
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 
-@router.get("", response_model=list[DocumentResponse])
+@router.get("", response_model=Page[DocumentResponse])
 @current_user
 async def list_owner_documents(
-    request: Request, current_user: AuthenticatedUser
-) -> list[DocumentResponse]:
-    """List successfully indexed sources for the authenticated user."""
+    request: Request,
+    current_user: AuthenticatedUser,
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+) -> Page[DocumentResponse]:
+    """List successfully indexed sources for the authenticated user, one page at a time.
+
+    ``RAGService.list_documents`` aggregates chunk counts per source from every
+    matching vector, so the full per-owner list is already computed before this
+    slices it into a page - pagination here bounds the response payload and the
+    web client's render cost, not the underlying vector-store query.
+    """
     document_library: RAGService = request.app.state.rag_service
     documents = await document_library.list_documents({"owner_id": current_user.id})
     prefix = f"{current_user.id}:"
-    return [
-        DocumentResponse(
-            source_id=document.source_id.removeprefix(prefix),
-            chunks_indexed=document.chunks_indexed,
-        )
-        for document in documents
-        if document.source_id.startswith(prefix)
-    ]
+    owned = [document for document in documents if document.source_id.startswith(prefix)]
+    page = owned[offset : offset + limit]
+    return Page(
+        items=[
+            DocumentResponse(
+                source_id=document.source_id.removeprefix(prefix),
+                chunks_indexed=document.chunks_indexed,
+            )
+            for document in page
+        ],
+        total=len(owned),
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/text", response_model=IngestDocumentResponse)
