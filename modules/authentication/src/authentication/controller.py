@@ -16,6 +16,7 @@ from inspect import signature
 from typing import Annotated, Any, cast
 from urllib.parse import quote, unquote
 
+from authentication.account_service import AccountService
 from authentication.repository import (
     LOGIN_STATE_COOKIE_NAME,
     SESSION_COOKIE_NAME,
@@ -266,3 +267,22 @@ async def me(current_user: AuthenticatedUser) -> MeResponse:
         display_name=current_user.display_name,
         avatar_url=current_user.avatar_url,
     )
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+@current_user
+async def delete_account(
+    request: Request, response: Response, current_user: AuthenticatedUser
+) -> None:
+    """Delete every agent, session, schedule, and document the caller owns, then sign out.
+
+    Does not delete the underlying WorkOS identity - only this app's data. The
+    caller can sign back in immediately afterward to a fresh, empty account.
+    See ``authentication.account_service.AccountService`` for the actual
+    per-module deletion and ``logout`` above for the WorkOS-side session end
+    (deliberately not called here - deleting local data shouldn't require a
+    second hop to WorkOS just to clear a cookie this response can clear itself).
+    """
+    account_service: AccountService = request.app.state.account_service
+    await account_service.delete_all_owned_data(current_user.id)
+    response.delete_cookie(SESSION_COOKIE_NAME)

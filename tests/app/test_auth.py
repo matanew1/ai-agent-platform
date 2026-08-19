@@ -55,10 +55,22 @@ class _FakeAuthenticator:
         return f"https://workos.example/logout?return_to={return_to}"
 
 
-def _app(*, app_environment: str = "production") -> tuple[FastAPI, _FakeAuthenticator]:
+class _FakeAccountService:
+    def __init__(self) -> None:
+        self.deleted_owner_ids: list[str] = []
+
+    async def delete_all_owned_data(self, owner_id: str) -> None:
+        self.deleted_owner_ids.append(owner_id)
+
+
+def _app(
+    *, app_environment: str = "production"
+) -> tuple[FastAPI, _FakeAuthenticator, _FakeAccountService]:
     app = FastAPI()
     authenticator = _FakeAuthenticator()
+    account_service = _FakeAccountService()
     app.state.authenticator = authenticator
+    app.state.account_service = account_service
     app.state.auth_settings = AuthSettings(
         mode="workos",
         app_environment=app_environment,
@@ -69,7 +81,7 @@ def _app(*, app_environment: str = "production") -> tuple[FastAPI, _FakeAuthenti
         frontend_url="https://app.example.com",
     )
     app.include_router(auth_router)
-    return app, authenticator
+    return app, authenticator, account_service
 
 
 def _set_cookie_lines(response) -> list[str]:  # noqa: ANN001 - httpx.Response, avoids import just for typing
@@ -85,7 +97,7 @@ def _login_state_cookie(*, state: str, return_to: str) -> str:
 
 
 def test_login_sets_state_cookie_and_redirects() -> None:
-    app, _ = _app()
+    app, _, _ = _app()
     client = TestClient(app)
 
     response = client.get("/auth/login?return_to=/agents/foo", follow_redirects=False)
@@ -100,7 +112,7 @@ def test_login_sets_state_cookie_and_redirects() -> None:
 
 
 def test_login_rejects_an_off_site_return_to() -> None:
-    app, _ = _app()
+    app, _, _ = _app()
     client = TestClient(app)
 
     response = client.get("/auth/login?return_to=//evil.example", follow_redirects=False)
@@ -113,7 +125,7 @@ def test_login_rejects_an_off_site_return_to() -> None:
 
 
 def test_callback_rejects_a_state_mismatch_without_setting_a_session() -> None:
-    app, authenticator = _app()
+    app, authenticator, _ = _app()
     client = TestClient(app)
     client.cookies.set(
         LOGIN_STATE_COOKIE_NAME, _login_state_cookie(state="expected", return_to="/agents")
@@ -128,7 +140,7 @@ def test_callback_rejects_a_state_mismatch_without_setting_a_session() -> None:
 
 
 def test_callback_success_sets_the_session_cookie_and_redirects_to_return_to() -> None:
-    app, authenticator = _app()
+    app, authenticator, _ = _app()
     client = TestClient(app)
     client.cookies.set(
         LOGIN_STATE_COOKIE_NAME, _login_state_cookie(state="expected", return_to="/agents/foo")
@@ -143,7 +155,7 @@ def test_callback_success_sets_the_session_cookie_and_redirects_to_return_to() -
 
 
 def test_callback_uses_secure_samesite_none_cookie_flags_outside_development() -> None:
-    app, _ = _app(app_environment="production")
+    app, _, _ = _app(app_environment="production")
     client = TestClient(app)
     client.cookies.set(
         LOGIN_STATE_COOKIE_NAME, _login_state_cookie(state="expected", return_to="/agents")
@@ -159,7 +171,7 @@ def test_callback_uses_secure_samesite_none_cookie_flags_outside_development() -
 
 
 def test_callback_relaxes_cookie_flags_in_development() -> None:
-    app, _ = _app(app_environment="development")
+    app, _, _ = _app(app_environment="development")
     client = TestClient(app)
     client.cookies.set(
         LOGIN_STATE_COOKIE_NAME, _login_state_cookie(state="expected", return_to="/agents")
@@ -175,7 +187,7 @@ def test_callback_relaxes_cookie_flags_in_development() -> None:
 
 
 def test_callback_failed_exchange_redirects_with_auth_error() -> None:
-    app, _ = _app()
+    app, _, _ = _app()
     client = TestClient(app)
     client.cookies.set(
         LOGIN_STATE_COOKIE_NAME, _login_state_cookie(state="expected", return_to="/agents")
@@ -191,7 +203,7 @@ def test_callback_failed_exchange_redirects_with_auth_error() -> None:
 
 
 def test_logout_clears_the_session_cookie_and_redirects_to_workos_logout() -> None:
-    app, _ = _app()
+    app, _, _ = _app()
     client = TestClient(app)
     client.cookies.set(SESSION_COOKIE_NAME, _SEALED)
 
@@ -212,7 +224,7 @@ def test_logout_clears_the_session_cookie_and_redirects_to_workos_logout() -> No
 
 
 def test_me_requires_a_session_cookie() -> None:
-    app, _ = _app()
+    app, _, _ = _app()
     client = TestClient(app)
 
     response = client.get("/auth/me")
@@ -221,7 +233,7 @@ def test_me_requires_a_session_cookie() -> None:
 
 
 def test_me_returns_the_authenticated_identity() -> None:
-    app, _ = _app()
+    app, _, _ = _app()
     client = TestClient(app)
     client.cookies.set(SESSION_COOKIE_NAME, _SEALED)
 
@@ -253,3 +265,31 @@ def test_me_in_development_mode_never_401s() -> None:
 
     assert response.status_code == 200
     assert response.json()["id"] == "local-dev"
+
+
+# --- DELETE /auth/account -----------------------------------------------------------
+
+
+def test_delete_account_requires_a_session_cookie() -> None:
+    app, _, account_service = _app()
+    client = TestClient(app)
+
+    response = client.delete("/auth/account")
+
+    assert response.status_code == 401
+    assert account_service.deleted_owner_ids == []
+
+
+def test_delete_account_deletes_the_caller_s_data_and_clears_the_session_cookie() -> None:
+    app, _, account_service = _app()
+    client = TestClient(app)
+    client.cookies.set(SESSION_COOKIE_NAME, _SEALED)
+
+    response = client.delete("/auth/account", follow_redirects=False)
+
+    assert response.status_code == 204
+    assert account_service.deleted_owner_ids == ["user_123"]
+    session_cookie_header = next(
+        line for line in _set_cookie_lines(response) if line.startswith(f"{SESSION_COOKIE_NAME}=")
+    )
+    assert "max-age=0" in session_cookie_header.lower()
