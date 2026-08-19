@@ -33,16 +33,20 @@ from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from functools import partial
 
+from agent.draft_service import DraftService
 from agent.repository import AgentRepository
 from agent.service import AgentService
 from artifact.repository import ArtifactRepository
 from artifact.service import ArtifactService
+from authentication.account_service import AccountService
 from authentication.repository import AuthSettings, build_authenticator_from_env
 from automation.repository import ScheduleRepository
 from automation.runner import ScheduleRunner
 from automation.service import ScheduleService
 from chat.service import build_chat_service
 from fastapi import FastAPI
+from feedback.repository import FeedbackRepository
+from feedback.service import FeedbackService
 from rag.repository import RagRepository
 from rag.service import RAGService
 from session.repository import SessionRepository
@@ -204,14 +208,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # mcp_exit_stack keeps every such connection open for the process's
         # lifetime and is closed in SECTION 7 alongside the other
         # connections opened in SECTION 2.
-        for server_params in load_servers():
-            tool_registry = await tool_registry.register_mcp(server_params, mcp_exit_stack)
+        for server_name, server_params in load_servers():
+            # A subprocess an external MCP server spawns can fail in ways
+            # load_servers() (a config-only check) can't see - the command
+            # isn't installed, the process exits during the handshake, the
+            # protocol negotiation fails. One server's runtime failure must
+            # not take every other, correctly-starting server down with it,
+            # the same "one bad entry doesn't cost the rest" guarantee
+            # load_servers() already gives at the config layer - so this is
+            # deliberately broad rather than a specific exception type.
+            try:
+                tool_registry = await tool_registry.register_mcp(
+                    server_params, mcp_exit_stack, server_name
+                )
+            except Exception:
+                logger.warning(
+                    "Skipping MCP server %r: failed to start or connect",
+                    server_name,
+                    exc_info=True,
+                )
 
         logger.debug("Tool registry ready: %s", [t.name for t in tool_registry.get_tools()])
         agent_service = AgentService(
             repository=AgentRepository(database.session_factory),
             tool_registry=tool_registry,
             model_catalog=llm,
+        )
+        draft_service = DraftService(
+            agent_service=agent_service, tool_registry=tool_registry, model_catalog=llm
         )
 
         # SECTION 4 - Build module services, injecting the infrastructure and
@@ -220,6 +244,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         settings_service = SettingsService(
             repository=SettingsRepository(database.session_factory), cache=redis_cache
         )
+        feedback_service = FeedbackService(repository=FeedbackRepository(database.session_factory))
         # chat_service_factory is build_chat_service partially applied over
         # the shared dependencies it needs on every call - see this module's
         # docstring on why ChatService itself can't be built once, here,
@@ -232,6 +257,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             tool_registry=tool_registry,
         )
         schedule_service = ScheduleService(repository=ScheduleRepository(database.session_factory))
+        account_service = AccountService(
+            agent_service=agent_service,
+            session_memory=memory,
+            rag_service=rag_service,
+            schedule_service=schedule_service,
+        )
         logger.info("Module services ready")
 
         # SECTION 5 - Expose services to route handlers via app.state - see
@@ -243,10 +274,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         app.state.rag_service = rag_service
         app.state.session_memory = memory
         app.state.agent_service = agent_service
+        app.state.draft_service = draft_service
         app.state.chat_service_factory = chat_service_factory
         app.state.model_catalog = llm
         app.state.settings_service = settings_service
         app.state.schedule_service = schedule_service
+        app.state.account_service = account_service
+        app.state.feedback_service = feedback_service
 
         # ScheduleRunner is the one background task in the whole app - it
         # reuses chat_service_factory/agent_service/redis_cache built above

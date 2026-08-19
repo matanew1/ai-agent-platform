@@ -27,6 +27,7 @@ from chat.controller import router as chat_router
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from feedback.controller import router as feedback_router
 from graph.graph import AgentError, handle_agent_error
 from model.controller import router as models_router
 from rag.controller import router as documents_router
@@ -115,6 +116,7 @@ app.include_router(chat_router)
 app.include_router(documents_router)
 app.include_router(schedules_router)
 app.include_router(settings_router)
+app.include_router(feedback_router)
 app.include_router(models_router, dependencies=[Depends(get_current_user)])
 # Tools can perform network and filesystem work, so the composition root
 # protects both registry reads and direct invocation without coupling the
