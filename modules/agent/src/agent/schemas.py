@@ -11,6 +11,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from shared.limits import MAX_CHAT_MESSAGE_CHARS
 from shared.types import ChatMessage
 
 DEFAULT_SYSTEM_PROMPT = """\
@@ -68,3 +69,17 @@ class SessionResponse(BaseModel):
     session_id: str
     history: list[ChatMessage]
     updated_at: datetime
+
+
+class RewriteDraftRequest(BaseModel):
+    """A user's in-progress chat draft, to be rewritten before sending."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+
+
+class RewriteDraftResponse(BaseModel):
+    """The rewritten draft. Not persisted - the caller still sends it as a normal message."""
+
+    message: str

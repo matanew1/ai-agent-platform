@@ -66,7 +66,7 @@ class ToolService:
         return self
 
     async def register_mcp(
-        self, server_params: StdioServerParameters, exit_stack: AsyncExitStack
+        self, server_params: StdioServerParameters, exit_stack: AsyncExitStack, server_name: str
     ) -> Self:
         """Connect to an external MCP server and register every tool it
         exposes into this registry. Returns this registry after registration
@@ -76,19 +76,21 @@ class ToolService:
         this class, so importing it back at module level here would be a
         circular import) does the actual connecting and adapting; this
         registry does the registering, e.g.
-        ``registry.register_mcp(server_params, exit_stack)`` from
+        ``registry.register_mcp(server_params, exit_stack, "fetch")`` from
         ``app/lifespan.py`` - see ``tool.tools.mcp.config.load_servers`` for
-        where ``server_params`` comes from.
+        where ``server_params`` and ``server_name`` come from.
 
         Args:
             server_params: Which process to spawn and how (command, args,
                 env).
             exit_stack: Holds the connection open past this call - see
                 ``McpServerAdapter.connect``'s docstring for why.
+            server_name: The server's ``mcp-servers.yaml`` key, stamped onto
+                each registered tool's ``ToolDefinition.source``.
         """
         from tool.tools.mcp.adapter import McpServerAdapter
 
-        adapter = await McpServerAdapter.connect(server_params, exit_stack)
+        adapter = await McpServerAdapter.connect(server_params, exit_stack, server_name)
         tools = await adapter.list_tools()
         for tool in tools:
             self._tools[tool.definition.name] = tool

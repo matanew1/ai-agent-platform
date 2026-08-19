@@ -91,9 +91,13 @@ class _Durable:
         self.events.append("postgres:save")
         self.checkpoint = checkpoint
 
-    async def list_checkpoints(self, _prefix):
+    async def list_checkpoints(self, _prefix, limit=None, offset=0):
         self.events.append("postgres:list")
         return [self.checkpoint] if self.checkpoint else []
+
+    async def count_checkpoints(self, _prefix):
+        self.events.append("postgres:count")
+        return 1 if self.checkpoint else 0
 
     async def delete_checkpoint(self, _session_id):
         self.events.append("postgres:delete")

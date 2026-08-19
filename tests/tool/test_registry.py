@@ -41,6 +41,16 @@ def test_register_local_makes_tool_visible_in_get_tools() -> None:
     assert names == ["echo"]
 
 
+def test_register_local_tool_defaults_source_to_local() -> None:
+    """Local tools carry ``source="local"`` without register_local needing to set it -
+    it's ToolDefinition's own default (see shared/types.py)."""
+    registry = ToolService()
+    registry.register_local(_make_definition(), _echo)
+
+    (tool,) = registry.get_tools()
+    assert tool.source == "local"
+
+
 def test_register_local_returns_the_registry_for_chaining() -> None:
     """Local registrations can be composed fluently at the app boundary."""
     registry = ToolService()
@@ -65,7 +75,7 @@ async def test_register_mcp_returns_the_registry_for_chaining(
             return [registered_tool]
 
     async def fake_connect(
-        server_params: StdioServerParameters, exit_stack: AsyncExitStack
+        server_params: StdioServerParameters, exit_stack: AsyncExitStack, server_name: str
     ) -> FakeAdapter:
         return FakeAdapter()
 
@@ -74,7 +84,7 @@ async def test_register_mcp_returns_the_registry_for_chaining(
     server_params = StdioServerParameters(command="fake-server")
 
     async with AsyncExitStack() as exit_stack:
-        returned_registry = await registry.register_mcp(server_params, exit_stack)
+        returned_registry = await registry.register_mcp(server_params, exit_stack, "fake")
 
     assert returned_registry is registry
     assert [tool.name for tool in registry.get_tools()] == ["echo"]

@@ -169,10 +169,9 @@ above for why that no longer collides with this module's own name) and
 
 A third server, `duckduckgo` (`ddg-mcp`: `ddg-text-search`,
 `ddg-image-search`, `ddg-news-search`, `ddg-video-search`, `ddg-ai-chat`),
-is enabled despite a measured accuracy cost, not because none was found -
-an explicit exception to "Servers evaluated and not enabled" below, worth
-reading in full before adding a fourth. Same methodology as that
-section's `sqlite` table, 3 trials each:
+was enabled for a time despite a measured accuracy cost, not because none
+was found - an explicit exception to "Servers evaluated and not enabled"
+below. Same methodology as that section's `sqlite` table, 3 trials each:
 
 | registered tools | `fetch` | `get_current_time` | `ddg-text-search` |
 | --- | --- | --- | --- |
@@ -185,26 +184,31 @@ worse on both counts: `get_current_time` drops further (1/3, vs sqlite's
 explicit "search the web for..." request - is never once selected. The
 `sqlite` section's own rule applies word for word: "a capability the
 agent reaches ~0-30% of the time, which also degrades one it previously
-reached reliably, is worse than no capability." It's enabled anyway,
-on the strength of DuckDuckGo being the one capability here an LLM
-categorically cannot substitute with a plausible-sounding guess (real-time
-web results, not a training-data snapshot) - the same reasoning that
-justified `time`, extended to a case where the selection cost is real
-and worse. If this table is still true under whatever model is
-configured when you're reading it, treat a request that clearly needs a
-search as needing an explicit nudge ("use duckduckgo to search for...")
-the same way `time` needed one for bare "what time is it?" - see that
-section above. Revisit this - drop it, or retry the table - if a larger
-model is ever configured; the table is the way to check.
+reached reliably, is worse than no capability." It stayed enabled anyway
+for a while, on the strength of DuckDuckGo being the one capability here
+an LLM categorically cannot substitute with a plausible-sounding guess
+(real-time web results, not a training-data snapshot) - the same
+reasoning that justified `time`, extended to a case where the selection
+cost was real and worse.
 
-`ddg-mcp` needs the same `--with mcp==1.9.4` pin as every other server
-here (see the gotcha at the end of this section) *in addition to* its own
-`--from ddg-mcp==0.1.1` (it declares a looser `mcp>=1.3.0` dependency that
-otherwise resolves a newer, incompatible SDK - confirmed the same way as
-every other server here, by reproducing the crash unpinned first). It's a
-community server, not an official DuckDuckGo integration - keep the pin
-and re-verify periodically for upstream search-result or rate-limit
-changes.
+**`duckduckgo` (`ddg-mcp`) has since been replaced by `tavily`** in
+`mcp-servers.yaml`, on the strength of that same 0/3-own-tool number, not
+in spite of it - `ddg-mcp` is a community/unofficial package with no path
+to fix a 0/3 selection rate, while Tavily is an official, actively
+maintained search API purpose-built for LLM/agent consumption (returns
+pre-summarized, structured results rather than scraped HTML, which is
+plausibly why an LLM's tool-selection prompt renders it more legibly than
+DuckDuckGo's five near-identical `ddg-*-search` tools). The tradeoff:
+Tavily needs a free-tier API key (`TAVILY_API_KEY`, 1,000 searches/month,
+resolved from the process env via `${TAVILY_API_KEY}` in the YAML - see
+`config.py::_resolve_env`) where `ddg-mcp` needed none. **The 3-trial
+accuracy table for `tavily` has not been run yet** - do that (same
+methodology as above: fetch, `get_current_time` with no timezone, and an
+explicit "search the web for..." prompt, with and without `tavily`
+registered) and record the result here before assuming it clears the same
+bar `ddg-mcp` failed. If it also lands in the ~0-30% band, the same rule
+applies: worse than no capability, tempered only by the same
+can't-fake-real-time-results exception `duckduckgo` and `time` relied on.
 
 `get_current_time`'s `timezone` argument is `required` in its schema, with
 no schema-level `default` - only a prose instruction in the parameter's own

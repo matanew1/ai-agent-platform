@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from session.models import SessionCheckpointRecord
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -43,15 +43,38 @@ class SessionRepository:
             await session.execute(statement)
             await session.commit()
 
-    async def list_checkpoints(self, session_prefix: str) -> list[SessionCheckpoint]:
+    async def list_checkpoints(
+        self, session_prefix: str, limit: int | None = None, offset: int = 0
+    ) -> list[SessionCheckpoint]:
+        """List checkpoints under ``session_prefix``, newest first.
+
+        Args:
+            session_prefix: Scopes the listing to one owner/agent pair.
+            limit: Maximum rows to return, applied as SQL ``LIMIT`` - ``None``
+                (the default) returns every matching row, unpaginated, for
+                callers that still need the whole scope (e.g. counting).
+            offset: Rows to skip before the page starts, applied as SQL
+                ``OFFSET``. Ignored when ``limit`` is ``None``.
+        """
         statement = (
             select(SessionCheckpointRecord)
             .where(SessionCheckpointRecord.session_id.startswith(session_prefix, autoescape=True))
             .order_by(SessionCheckpointRecord.updated_at.desc())
         )
+        if limit is not None:
+            statement = statement.limit(limit).offset(offset)
         async with self._session_factory() as session:
             records = (await session.scalars(statement)).all()
         return [_to_checkpoint(record) for record in records]
+
+    async def count_checkpoints(self, session_prefix: str) -> int:
+        statement = (
+            select(func.count())
+            .select_from(SessionCheckpointRecord)
+            .where(SessionCheckpointRecord.session_id.startswith(session_prefix, autoescape=True))
+        )
+        async with self._session_factory() as session:
+            return (await session.scalars(statement)).one()
 
     async def delete_checkpoint(self, session_id: str) -> bool:
         statement = delete(SessionCheckpointRecord).where(

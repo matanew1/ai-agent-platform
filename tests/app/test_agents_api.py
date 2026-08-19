@@ -128,9 +128,11 @@ class _Memory:
     async def get_checkpoint(self, session_id: str) -> SessionCheckpoint | None:
         return self.items.get(session_id)
 
-    async def list_checkpoints(self, session_prefix: str) -> list[SessionCheckpoint]:
+    async def list_checkpoints(
+        self, session_prefix: str, limit: int | None = None, offset: int = 0
+    ) -> list[SessionCheckpoint]:
         self.list_prefixes.append(session_prefix)
-        return sorted(
+        matches = sorted(
             (
                 checkpoint
                 for key, checkpoint in self.items.items()
@@ -139,6 +141,10 @@ class _Memory:
             key=lambda checkpoint: checkpoint.updated_at,
             reverse=True,
         )
+        return matches[offset : offset + limit] if limit is not None else matches
+
+    async def count_checkpoints(self, session_prefix: str) -> int:
+        return sum(1 for key in self.items if key.startswith(session_prefix))
 
     async def delete_checkpoint(self, session_id: str) -> bool:
         return self.items.pop(session_id, None) is not None
@@ -189,6 +195,19 @@ class _Authenticator:
         )
 
 
+class _DraftService:
+    """Fake satisfying the slice of agent.draft_service.DraftService the route calls."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    async def rewrite(self, owner_id: str, agent_id: str, message: str) -> str | None:
+        self.calls.append((owner_id, agent_id, message))
+        if agent_id == "missing":
+            return None
+        return f"Rewritten: {message}"
+
+
 class _ArtifactService:
     def __init__(self) -> None:
         self.grants: list[tuple[str, list[ArtifactReference]]] = []
@@ -203,10 +222,13 @@ class _ArtifactService:
         )
 
 
-def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, _ChatService]:
+def _client(
+    *, authenticated: bool = True
+) -> tuple[TestClient, _DocumentIndex, _ChatService, _DraftService]:
     app = FastAPI()
     document_index = _DocumentIndex()
     chat_service = _ChatService()
+    draft_service = _DraftService()
     model_catalog = _ModelCatalog()
     app.state.agent_service = AgentService(
         _Repository(),
@@ -217,6 +239,7 @@ def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, 
     app.state.session_memory = _Memory()
     app.state.tool_registry = _ToolService()
     app.state.model_catalog = model_catalog
+    app.state.draft_service = draft_service
     app.state.authenticator = _Authenticator()
     app.state.artifact_service = _ArtifactService()
     # chat.controller reads app.state.chat_service_factory (a real
@@ -230,7 +253,7 @@ def _client(*, authenticated: bool = True) -> tuple[TestClient, _DocumentIndex, 
     app.include_router(documents_router)
     app.include_router(models_router)
     cookies = {SESSION_COOKIE_NAME: "owner-1"} if authenticated else None
-    return TestClient(app, cookies=cookies), document_index, chat_service
+    return TestClient(app, cookies=cookies), document_index, chat_service, draft_service
 
 
 def test_agent_routes_require_session_cookie_and_reject_caller_owner_id() -> None:
@@ -347,7 +370,7 @@ def test_documents_are_owner_scoped_not_nested_under_agents() -> None:
 
 
 def test_ingest_owner_document_scopes_by_owner_id_only() -> None:
-    client, document_index, _ = _client()
+    client, document_index, _, _ = _client()
 
     response = client.post(
         "/documents/text",
@@ -362,7 +385,7 @@ def test_ingest_owner_document_scopes_by_owner_id_only() -> None:
 
 
 def test_list_and_delete_documents_use_exact_owner_source_filters() -> None:
-    client, document_index, _ = _client()
+    client, document_index, _, _ = _client()
     document_index.documents = [
         IndexedDocument(source_id="owner-1:report.pdf", chunks_indexed=3),
         # A malformed/legacy record that cannot be safely mapped back to a
@@ -376,7 +399,12 @@ def test_list_and_delete_documents_use_exact_owner_source_filters() -> None:
     deleted = client.delete("/documents/report.pdf")
 
     assert listed.status_code == 200
-    assert listed.json() == [{"source_id": "report.pdf", "chunks_indexed": 3, "status": "indexed"}]
+    assert listed.json() == {
+        "items": [{"source_id": "report.pdf", "chunks_indexed": 3, "status": "indexed"}],
+        "total": 1,
+        "limit": 20,
+        "offset": 0,
+    }
     assert document_index.list_filters == [{"owner_id": "owner-1"}]
     assert missing.status_code == 404
     assert deleted.status_code == 204
@@ -384,6 +412,33 @@ def test_list_and_delete_documents_use_exact_owner_source_filters() -> None:
         {"owner_id": "owner-1", "source_id": "owner-1:report.pdf"},
         {"owner_id": "owner-1", "source_id": "owner-1:report.pdf"},
     ]
+
+
+def test_list_documents_paginates_with_limit_and_offset() -> None:
+    client, document_index, _, _ = _client()
+    document_index.documents = [
+        IndexedDocument(source_id=f"owner-1:doc-{index}.pdf", chunks_indexed=1)
+        for index in range(5)
+    ]
+
+    first_page = client.get("/documents", params={"limit": 2, "offset": 0})
+    second_page = client.get("/documents", params={"limit": 2, "offset": 2})
+
+    assert first_page.status_code == 200
+    body = first_page.json()
+    assert body["total"] == 5
+    assert body["limit"] == 2
+    assert body["offset"] == 0
+    assert [item["source_id"] for item in body["items"]] == ["doc-0.pdf", "doc-1.pdf"]
+    assert [item["source_id"] for item in second_page.json()["items"]] == ["doc-2.pdf", "doc-3.pdf"]
+
+
+def test_list_documents_rejects_a_limit_over_the_page_cap() -> None:
+    client, *_ = _client()
+
+    response = client.get("/documents", params={"limit": 101})
+
+    assert response.status_code == 422
 
 
 def test_session_routes_return_client_ids_and_history_with_owner_agent_isolation() -> None:
@@ -445,11 +500,44 @@ def test_session_routes_return_client_ids_and_history_with_owner_agent_isolation
         "updated_at": "2026-08-10T12:30:00Z",
     }
     assert listed.status_code == 200
-    assert listed.json() == [expected]
+    assert listed.json() == {"items": [expected], "total": 1, "limit": 20, "offset": 0}
     assert fetched.status_code == 200
     assert fetched.json() == expected
     assert wrong_owner.status_code == 404
     assert memory.list_prefixes == [f"owner-1:{agent_id}:"]
+
+
+def test_list_agent_sessions_paginates_with_limit_and_offset() -> None:
+    client, *_ = _client()
+    created = client.post("/agents", json={"name": "Researcher", "allowed_tools": []})
+    agent_id = created.json()["id"]
+    memory: _Memory = client.app.state.session_memory
+    for index in range(3):
+        session_id = f"owner-1:{agent_id}:s{index}"
+        memory.items[session_id] = SessionCheckpoint(
+            session_id=session_id,
+            updated_at=datetime(2026, 8, 10, 12, index, tzinfo=UTC),
+        )
+
+    first_page = client.get(f"/agents/{agent_id}/sessions", params={"limit": 2, "offset": 0})
+    second_page = client.get(f"/agents/{agent_id}/sessions", params={"limit": 2, "offset": 2})
+
+    assert first_page.status_code == 200
+    body = first_page.json()
+    assert body["total"] == 3
+    # newest first (highest updated_at) - s2, s1
+    assert [item["session_id"] for item in body["items"]] == ["s2", "s1"]
+    assert [item["session_id"] for item in second_page.json()["items"]] == ["s0"]
+
+
+def test_list_agent_sessions_rejects_a_limit_over_the_page_cap() -> None:
+    client, *_ = _client()
+    created = client.post("/agents", json={"name": "Researcher", "allowed_tools": []})
+    agent_id = created.json()["id"]
+
+    response = client.get(f"/agents/{agent_id}/sessions", params={"limit": 101})
+
+    assert response.status_code == 422
 
 
 def test_session_detail_rejects_a_mismatched_checkpoint_payload() -> None:
@@ -504,7 +592,7 @@ def test_swagger_exposes_only_the_public_agents_surface() -> None:
 
 
 def test_chat_stream_indexes_attached_files_for_the_authenticated_user_and_agent() -> None:
-    client, document_index, agent_service = _client()
+    client, document_index, agent_service, _ = _client()
     client.post(
         "/agents",
         json={"name": "Researcher", "allowed_tools": []},
@@ -624,7 +712,7 @@ def test_chat_stream_rejects_more_attachments_than_the_cap() -> None:
 
 
 def test_chat_stream_lets_the_caller_narrow_tools_for_one_turn() -> None:
-    client, _document_index, chat_service = _client()
+    client, _document_index, chat_service, _ = _client()
     client.post("/agents", json={"name": "R", "allowed_tools": ["fetch"]})
     agent_id = client.get("/agents").json()[0]["id"]
 
@@ -670,7 +758,7 @@ def test_chat_stream_resolves_no_override_on_an_unrestricted_agent_to_none_not_e
     # None, not [], or graph.graph._execute_tools would treat "no override"
     # the same as "restrict to zero tools" - the exact bug this schema
     # change (tools) introduced and then fixed.
-    client, _document_index, chat_service = _client()
+    client, _document_index, chat_service, _ = _client()
     client.post("/agents", json={"name": "R", "allowed_tools": []})
     agent_id = client.get("/agents").json()[0]["id"]
 
@@ -703,3 +791,51 @@ def test_ingest_owner_file_rejects_a_file_over_the_upload_limit() -> None:
     )
 
     assert response.status_code == 413
+
+
+def test_rewrite_draft_returns_the_service_s_rewritten_message() -> None:
+    client, *_, draft_service = _client()
+    client.post("/agents", json={"name": "Researcher", "allowed_tools": []})
+    agent_id = client.get("/agents").json()[0]["id"]
+
+    response = client.post(
+        f"/agents/{agent_id}/draft/rewrite", json={"message": "help me with something"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Rewritten: help me with something"}
+    assert draft_service.calls == [("owner-1", agent_id, "help me with something")]
+
+
+def test_rewrite_draft_404s_for_an_agent_not_owned_by_the_caller() -> None:
+    client, *_ = _client()
+
+    response = client.post("/agents/missing/draft/rewrite", json={"message": "hi"})
+
+    assert response.status_code == 404
+
+
+def test_rewrite_draft_requires_a_session_cookie() -> None:
+    client, *_ = _client(authenticated=False)
+
+    response = client.post("/agents/some-agent/draft/rewrite", json={"message": "hi"})
+
+    assert response.status_code == 401
+
+
+def test_rewrite_draft_rejects_an_empty_message() -> None:
+    client, *_ = _client()
+
+    response = client.post("/agents/some-agent/draft/rewrite", json={"message": ""})
+
+    assert response.status_code == 422
+
+
+def test_rewrite_draft_rejects_an_oversized_message() -> None:
+    client, *_ = _client()
+
+    response = client.post(
+        "/agents/some-agent/draft/rewrite", json={"message": "x" * (MAX_CHAT_MESSAGE_CHARS + 1)}
+    )
+
+    assert response.status_code == 422
