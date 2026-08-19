@@ -65,8 +65,13 @@ class HybridSessionStore:
         await self._durable.save_checkpoint(checkpoint)
         await self._cache_best_effort(checkpoint)
 
-    async def list_checkpoints(self, session_prefix: str) -> list[SessionCheckpoint]:
-        return await self._durable.list_checkpoints(session_prefix)
+    async def list_checkpoints(
+        self, session_prefix: str, limit: int | None = None, offset: int = 0
+    ) -> list[SessionCheckpoint]:
+        return await self._durable.list_checkpoints(session_prefix, limit=limit, offset=offset)
+
+    async def count_checkpoints(self, session_prefix: str) -> int:
+        return await self._durable.count_checkpoints(session_prefix)
 
     async def delete_checkpoint(self, session_id: str) -> bool:
         async with self.session_lock(session_id):

@@ -11,13 +11,23 @@ routes live in ``rag.controller`` and model-catalog routes live in
 
 from __future__ import annotations
 
-from agent.schemas import AgentResponse, CreateAgentRequest, SessionResponse, UpdateAgentRequest
+from agent.draft_service import DraftService
+from agent.schemas import (
+    AgentResponse,
+    CreateAgentRequest,
+    RewriteDraftRequest,
+    RewriteDraftResponse,
+    SessionResponse,
+    UpdateAgentRequest,
+)
 from agent.service import AgentService
 from authentication.controller import current_user
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from session.service import HybridSessionStore
 
 from shared.auth import AuthenticatedUser
+from shared.limits import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
+from shared.types import Page
 
 router = APIRouter(prefix="/agents", tags=["agents"])
 
@@ -102,29 +112,39 @@ async def delete_agent(agent_id: str, request: Request, current_user: Authentica
 
 @router.get(
     "/{agent_id}/sessions",
-    response_model=list[SessionResponse],
+    response_model=Page[SessionResponse],
     response_model_exclude_defaults=True,
 )
 @current_user
 async def list_agent_sessions(
-    agent_id: str, request: Request, current_user: AuthenticatedUser
-) -> list[SessionResponse]:
-    """List retained sessions for one owned agent, newest first."""
+    agent_id: str,
+    request: Request,
+    current_user: AuthenticatedUser,
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+) -> Page[SessionResponse]:
+    """List retained sessions for one owned agent, newest first, one page at a time."""
     agentService: AgentService = request.app.state.agent_service
     if await agentService.get(current_user.id, agent_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     scoped_prefix = f"{current_user.id}:{agent_id}:"
     memory: HybridSessionStore = request.app.state.session_memory
-    checkpoints = await memory.list_checkpoints(scoped_prefix)
-    return [
-        SessionResponse(
-            session_id=checkpoint.session_id.removeprefix(scoped_prefix),
-            history=checkpoint.history,
-            updated_at=checkpoint.updated_at,
-        )
-        for checkpoint in checkpoints
-        if checkpoint.session_id.startswith(scoped_prefix)
-    ]
+    checkpoints = await memory.list_checkpoints(scoped_prefix, limit=limit, offset=offset)
+    total = await memory.count_checkpoints(scoped_prefix)
+    return Page(
+        items=[
+            SessionResponse(
+                session_id=checkpoint.session_id.removeprefix(scoped_prefix),
+                history=checkpoint.history,
+                updated_at=checkpoint.updated_at,
+            )
+            for checkpoint in checkpoints
+            if checkpoint.session_id.startswith(scoped_prefix)
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get(
@@ -175,3 +195,27 @@ async def delete_agent_session(
     memory: HybridSessionStore = request.app.state.session_memory
     if not await memory.delete_checkpoint(scoped_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+
+
+# --- Draft rewriting ---------------------------------------------------------------
+
+
+@router.post("/{agent_id}/draft/rewrite", response_model=RewriteDraftResponse)
+@current_user
+async def rewrite_draft(
+    agent_id: str,
+    payload: RewriteDraftRequest,
+    request: Request,
+    current_user: AuthenticatedUser,
+) -> RewriteDraftResponse:
+    """Rewrite a user's draft chat message using one owned agent's own configuration.
+
+    A single non-streamed LLM call, not a chat turn: nothing here is persisted to a
+    session, and no tool actually runs - the agent's system prompt and allowed tools
+    only frame how the draft gets rewritten. See ``agent.draft_service.DraftService``.
+    """
+    draft_service: DraftService = request.app.state.draft_service
+    rewritten = await draft_service.rewrite(current_user.id, agent_id, payload.message)
+    if rewritten is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    return RewriteDraftResponse(message=rewritten)
