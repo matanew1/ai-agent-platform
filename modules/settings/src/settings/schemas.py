@@ -18,7 +18,6 @@ class WorkspaceSettings(BaseModel):
     high_contrast: bool = False
     auto_read_responses: bool = False
     send_on_enter: bool = True
-    sidebar_default_open: bool = True
     speech_voice_en: str = Field(default="preferred", max_length=512)
     speech_voice_he: str = Field(default="preferred", max_length=512)
     speech_input_locale: Literal["auto", "en", "he"] = "auto"
