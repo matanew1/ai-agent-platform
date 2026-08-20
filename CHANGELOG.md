@@ -12,6 +12,18 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [0.16.0](https://github.com/matanew1/ai-agent-platform/compare/v0.15.0...v0.16.0) (2026-08-20)
+
+
+### Added
+
+* **agent:** paginate session listing and add a draft-rewrite endpoint ([4df1ec9](https://github.com/matanew1/ai-agent-platform/commit/4df1ec9a0d3a8fd91eca145ed9c9e3e54e51565b))
+* **app:** wire draft, account, and feedback services into the composition root ([df25940](https://github.com/matanew1/ai-agent-platform/commit/df25940c93389a3f684615c96d2344bb34315dd4))
+* **authentication:** add a delete-account endpoint and AccountService ([f829de2](https://github.com/matanew1/ai-agent-platform/commit/f829de2e241b10adeccc9e6f37d27c44560695e9))
+* **feedback:** add a feedback submission module ([9cc32a7](https://github.com/matanew1/ai-agent-platform/commit/9cc32a771af1d727d97f9831a68aef3a6b82884d))
+* **rag:** paginate the document listing endpoint ([5414d27](https://github.com/matanew1/ai-agent-platform/commit/5414d27fc13fe73ec8f700438eeccf1bfba4dafe))
+* **tool:** group MCP tools by source, add filesystem server, replace duckduckgo with tavily ([7b29151](https://github.com/matanew1/ai-agent-platform/commit/7b29151e5c039c055eaf1576513d500b35bb4395))
+
 ## [0.15.0](https://github.com/matanew1/ai-agent-platform/compare/v0.14.0...v0.15.0) (2026-08-17)
 
 
