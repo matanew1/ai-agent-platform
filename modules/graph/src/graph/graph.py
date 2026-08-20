@@ -143,10 +143,29 @@ def _mentions_a_tool(input_text: str, tools: list[ToolDefinition]) -> bool:
     """Cheap, local pre-check for whether a tool call is even plausible.
 
     Matches if any word of a registered tool's name (split on ``_``, e.g.
-    ``extract_pdf`` -> ``extract``, ``pdf``) appears in the input. Generic
-    over whatever tools are registered - nothing here is hardcoded to
-    today's specific tool set, so it doesn't need updating when a new tool
-    is added.
+    ``extract_pdf`` -> ``extract``, ``pdf``) *or* its source (e.g. ``gmail``,
+    ``tavily``, ``fetch`` - see ``ToolDefinition.source``) appears in the
+    input. Generic over whatever tools are registered - nothing here is
+    hardcoded to today's specific tool set, so it doesn't need updating when
+    a new tool is added.
+
+    The source half of this matters because a tool's own name doesn't
+    always contain the product name a user would actually type: every
+    Gmail tool is named around ``email`` (``search_emails``, ``read_email``,
+    ...), so "show me my last 10 gmails" - a completely ordinary way to
+    phrase that request - matched none of them and skipped tool execution
+    entirely, before this was added. ``tool.source`` is exactly the
+    registered MCP server's name (``mcp-servers.yaml``'s key), so checking
+    it too closes this gap the same generic way for any future server, not
+    just gmail - except for ``"local"`` itself, ``ToolDefinition.source``'s
+    default for every in-process tool (``pdf``, ``markdown``, ``ats``, ...).
+    Unlike a real MCP server name, ``"local"`` is a generic English word
+    with no relation to what any tool actually does, and local tools are
+    always registered - so treating it as a keyword the same way as
+    ``"gmail"`` made this fire on ordinary, unrelated messages ("a good
+    local restaurant", "saved it locally") on effectively every turn,
+    defeating the whole point of a pre-check meant to skip the LLM ask when
+    no tool is plausible. Excluded explicitly below.
 
     This is a recall-favoring heuristic, not a replacement for the LLM's
     judgment: false positives just mean execute_tools asks the LLM as
@@ -156,9 +175,15 @@ def _mentions_a_tool(input_text: str, tools: list[ToolDefinition]) -> bool:
     genuinely is referenced.
     """
     lowered = input_text.lower()
-    return any(
-        word in lowered for tool in tools for word in tool.name.lower().split("_") if len(word) > 2
-    )
+    words = {
+        word
+        for tool in tools
+        for text in (tool.name, tool.source)
+        if text != "local"
+        for word in text.lower().split("_")
+        if len(word) > 2
+    }
+    return any(word in lowered for word in words)
 
 
 def _explicitly_named_tools(input_text: str, tools: list[ToolDefinition]) -> list[ToolDefinition]:
