@@ -34,6 +34,7 @@ one - see ``.claude/rules/architecture.md``'s "Avoiding over-engineering".
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from fastapi import Request
@@ -174,6 +175,40 @@ def _explicitly_named_tools(input_text: str, tools: list[ToolDefinition]) -> lis
     return [tool for tool in tools if tool.name.lower() in lowered]
 
 
+_GMAIL_INBOX_WORDS = frozenset(
+    {"email", "emails", "mail", "inbox", "unread", "message", "messages"}
+)
+_GMAIL_READ_ONLY_WORDS = frozenset({"search", "find", "read", "summarize", "summary"})
+# Checked before the topic/action words below and wins outright: "unread"/
+# "inbox" are topic words describing *what* mail, not what to do with it, so
+# a request like "delete my unread emails" or "archive all messages in my
+# inbox" satisfies both word sets on topic alone. Narrowing the routing
+# prompt down to search_emails/read_email for such a request wouldn't just
+# fail to help - it would make delete_email/modify_email/batch_delete_emails
+# structurally unselectable, since their schemas would never reach the
+# prompt at all. Word-*set* membership matters here, not substring
+# containment: "read" is a literal substring of "unread", so a naive
+# `"read" in text` check would misfire on exactly the mutating requests this
+# list exists to exclude - see _gmail_inbox_tools' tokenization below.
+_GMAIL_MUTATING_WORDS = frozenset(
+    {
+        "delete",
+        "remove",
+        "archive",
+        "mark",
+        "label",
+        "move",
+        "trash",
+        "modify",
+        "send",
+        "draft",
+        "reply",
+        "forward",
+        "unsubscribe",
+    }
+)
+
+
 def _gmail_inbox_tools(input_text: str, tools: list[ToolDefinition]) -> list[ToolDefinition]:
     """Pick the two Gmail tools needed to inspect an inbox-style request.
 
@@ -181,14 +216,13 @@ def _gmail_inbox_tools(input_text: str, tools: list[ToolDefinition]) -> list[Too
     two-step task. Limiting the routing menu to these tools keeps their
     schemas visible to smaller local models instead of burying them among
     every enabled MCP capability. Mutating Gmail requests intentionally do
-    not use this shortcut and retain the normal decision flow.
+    not use this shortcut and retain the normal decision flow - see
+    ``_GMAIL_MUTATING_WORDS``.
     """
-    lowered = input_text.lower()
-    inbox_terms = ("email", "emails", "mail", "inbox", "unread", "message", "messages")
-    inspect_terms = ("search", "find", "read", "summarize", "summary", "unread", "inbox")
-    if not any(term in lowered for term in inbox_terms) or not any(
-        term in lowered for term in inspect_terms
-    ):
+    words = set(re.findall(r"[a-z0-9]+", input_text.lower()))
+    if words & _GMAIL_MUTATING_WORDS:
+        return []
+    if not (words & _GMAIL_INBOX_WORDS) or not (words & _GMAIL_READ_ONLY_WORDS):
         return []
     inbox_tool_names = {"search_emails", "read_email"}
     return [tool for tool in tools if tool.name in inbox_tool_names]
