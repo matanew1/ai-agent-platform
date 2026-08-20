@@ -160,6 +160,40 @@ def _mentions_a_tool(input_text: str, tools: list[ToolDefinition]) -> bool:
     )
 
 
+def _explicitly_named_tools(input_text: str, tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    """Return tools whose full names the user explicitly included in their request.
+
+    The routing prompt can become very large when an agent is authorized for
+    several MCP servers. If the user already names a tool (for example,
+    ``search_emails``), presenting the whole registry makes a simple,
+    unambiguous request needlessly difficult for smaller local models. Keep
+    only the named tools for that decision; authorization is still enforced
+    by the caller's already-filtered ``tools`` list.
+    """
+    lowered = input_text.lower()
+    return [tool for tool in tools if tool.name.lower() in lowered]
+
+
+def _gmail_inbox_tools(input_text: str, tools: list[ToolDefinition]) -> list[ToolDefinition]:
+    """Pick the two Gmail tools needed to inspect an inbox-style request.
+
+    Searching unread mail and reading the matching messages are a common
+    two-step task. Limiting the routing menu to these tools keeps their
+    schemas visible to smaller local models instead of burying them among
+    every enabled MCP capability. Mutating Gmail requests intentionally do
+    not use this shortcut and retain the normal decision flow.
+    """
+    lowered = input_text.lower()
+    inbox_terms = ("email", "emails", "mail", "inbox", "unread", "message", "messages")
+    inspect_terms = ("search", "find", "read", "summarize", "summary", "unread", "inbox")
+    if not any(term in lowered for term in inbox_terms) or not any(
+        term in lowered for term in inspect_terms
+    ):
+        return []
+    inbox_tool_names = {"search_emails", "read_email"}
+    return [tool for tool in tools if tool.name in inbox_tool_names]
+
+
 def _is_smalltalk(input_text: str) -> bool:
     """Cheap, local pre-check for whether retrieval is even worth doing.
 
@@ -325,6 +359,18 @@ class AgentGraph:
                 state.session_id,
             )
             return {"tool_results": []}
+
+        routing_tools = _explicitly_named_tools(state.input, tools) or _gmail_inbox_tools(
+            state.input, tools
+        )
+        if routing_tools:
+            tools = routing_tools
+            allowed_names = {tool.name for tool in tools}
+            logger.debug(
+                "[execute_tools] session_id=%r narrowed_to_routing_tools=%s",
+                state.session_id,
+                sorted(allowed_names),
+            )
 
         prompt = TOOL_CALL_PROMPT_TEMPLATE.format(
             system_prompt=self._system_prompt,
