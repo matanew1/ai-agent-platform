@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [1.0.2](https://github.com/matanew1/ai-agent-platform/compare/v1.0.1...v1.0.2) (2026-08-20)
+
+
+### Fixed
+
+* **graph:** match tool source, not just tool name, in _mentions_a_tool ([#31](https://github.com/matanew1/ai-agent-platform/issues/31)) ([e855d9e](https://github.com/matanew1/ai-agent-platform/commit/e855d9e0ddda8a8b78368b91ffbf2da5957ae853)), closes [#30](https://github.com/matanew1/ai-agent-platform/issues/30)
+
 ### [1.0.1](https://github.com/matanew1/ai-agent-platform/compare/v1.0.0...v1.0.1) (2026-08-20)
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "ai-agent-platform"
-version = "1.0.1"
+version = "1.0.2"
 description = "Modular-monolith AI agent platform: FastAPI + LangGraph agent, RAG, and a local tool registry over PostgreSQL/Redis/Qdrant."
 readme = "README.md"
 requires-python = ">=3.12"
