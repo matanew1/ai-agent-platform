@@ -157,7 +157,15 @@ def _mentions_a_tool(input_text: str, tools: list[ToolDefinition]) -> bool:
     entirely, before this was added. ``tool.source`` is exactly the
     registered MCP server's name (``mcp-servers.yaml``'s key), so checking
     it too closes this gap the same generic way for any future server, not
-    just gmail.
+    just gmail - except for ``"local"`` itself, ``ToolDefinition.source``'s
+    default for every in-process tool (``pdf``, ``markdown``, ``ats``, ...).
+    Unlike a real MCP server name, ``"local"`` is a generic English word
+    with no relation to what any tool actually does, and local tools are
+    always registered - so treating it as a keyword the same way as
+    ``"gmail"`` made this fire on ordinary, unrelated messages ("a good
+    local restaurant", "saved it locally") on effectively every turn,
+    defeating the whole point of a pre-check meant to skip the LLM ask when
+    no tool is plausible. Excluded explicitly below.
 
     This is a recall-favoring heuristic, not a replacement for the LLM's
     judgment: false positives just mean execute_tools asks the LLM as
@@ -171,6 +179,7 @@ def _mentions_a_tool(input_text: str, tools: list[ToolDefinition]) -> bool:
         word
         for tool in tools
         for text in (tool.name, tool.source)
+        if text != "local"
         for word in text.lower().split("_")
         if len(word) > 2
     }

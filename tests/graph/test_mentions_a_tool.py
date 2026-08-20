@@ -32,3 +32,17 @@ def test_no_tool_mentioned_returns_false() -> None:
     tools = [ToolDefinition(name="search_emails", description="Search Gmail.", source="gmail")]
 
     assert _mentions_a_tool("What's the weather like today?", tools) is False
+
+
+def test_the_local_source_default_is_not_treated_as_a_keyword() -> None:
+    # ToolDefinition.source defaults to "local" for every in-process tool
+    # (pdf, markdown, ats, ...), which are always registered - unlike a real
+    # MCP server name (gmail, tavily), "local" is a generic English word
+    # with no relation to what any tool does, so treating it as a keyword
+    # the same way as "gmail" would make this fire on ordinary, unrelated
+    # messages on effectively every turn. Regression coverage for exactly
+    # that: the tool's own name doesn't match either, so this must be False.
+    tools = [ToolDefinition(name="extract_pdf", description="Extract PDF text.", source="local")]
+
+    assert _mentions_a_tool("Can you recommend a good local restaurant?", tools) is False
+    assert _mentions_a_tool("I saved it locally on my machine.", tools) is False
