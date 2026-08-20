@@ -312,6 +312,100 @@ is cheap (a YAML entry); justifying one is not. Measure selection accuracy
 before and after - `_mentions_a_tool` and the tool-call prompt both scale
 with the registered set.
 
+## Gmail and Calendar
+
+Two more servers, `gmail` (`@gongrzhe/server-gmail-autoauth-mcp@1.1.11`:
+`send_email`, `draft_email`, `read_email`, `search_emails`,
+`modify_email`, `delete_email`, `list_email_labels`, `create_label`,
+`update_label`, `delete_label`, batch variants, `download_attachment`)
+and `calendar` (`@cocal/google-calendar-mcp@2.6.2`, `--enable-tools`-
+whitelisted to `list-calendars`, `list-events`, `search-events`,
+`get-event`, `create-event`, `update-event`, `delete-event`,
+`get-freebusy`), were added at the user's explicit request and with full
+read+write left on, after walking through three questions with them
+first rather than assuming an answer to any of the three:
+
+- **No official server exists for either.** Google publishes no
+  first-party Gmail or Calendar MCP server - both are community packages,
+  the same category `workos` was declined for above. `calendar` is at
+  least traceable to one actively-maintained upstream
+  (`nspady/google-calendar-mcp`, npm-published via a GitHub Actions
+  trusted-publish) that most of the other `google-calendar-mcp` npm
+  listings fork from; `gmail` has no equivalently-official-feeling
+  alternative. The user chose to proceed with both anyway.
+- **Single shared account, not per-user OAuth.** Every server in this
+  file is registered once, process-wide, in `app/lifespan.py` - the same
+  tool set for every authenticated user. Gmail and Calendar are inherently
+  one person's inbox and schedule, so wiring them the same way means every
+  user of this app reaches the *same* Gmail/Calendar account. Per-user
+  Google accounts (each `CurrentUser` connecting their own) would need a
+  real feature - an `authentication`-side OAuth flow, per-user token
+  storage/refresh, per-request credential injection into the MCP call -
+  not a YAML entry. The user explicitly chose the single-shared-account
+  scope, matching how `tavily`/`filesystem` already work here. Do not
+  repoint either server at an account whose contents matter if this app
+  ever gets real, mutually-untrusted users without that bigger feature
+  first.
+- **Read+write, not read-only.** `fetch` already pipes attacker-controlled
+  web text into the model's prompt - the same textbook prompt-injection
+  channel `git`, `workos`, and `filesystem`'s write tools were all
+  weighed against above. `filesystem`'s mitigation is that its blast
+  radius is a dedicated, empty, throwaway directory; here it can't be,
+  because `send_email` and `delete_event` acting on a real inbox and
+  calendar *are* the point of asking for these tools. The user chose
+  read+write with that tradeoff explicit rather than defaulting to
+  read-only.
+
+A security-auditor pass on the implementation (not the three decisions
+above, which it was told to treat as already made) found one finding
+serious enough to record here rather than quietly patch around:
+
+- **(Critical, knowingly accepted) `gmail`'s `attachments`/
+  `download_attachment` is an unscoped local-filesystem primitive, not
+  just Gmail-API read+write.** `send_email`/`draft_email` accept
+  `attachments: string[]` - arbitrary local file paths, read from
+  wherever the MCP subprocess runs and attached to the outgoing email;
+  `download_attachment`'s `savePath` defaults to `process.cwd()` if
+  omitted. Confirmed by reading
+  `@gongrzhe/server-gmail-autoauth-mcp@1.1.11`'s own `dist/index.js`, not
+  just its README - this is real, not a documentation ambiguity. There is
+  no `--enable-tools`/whitelist mechanism for this server (confirmed: none
+  exists in its source) to disable either tool at the config layer, unlike
+  `calendar`'s fix below. Chained with `fetch`, this is a concrete
+  exfiltration path: a fetched page's injected instructions could tell the
+  agent to `send_email` with `attachments: ["/path/to/.env.prod"]` to an
+  attacker address - no human interaction required, unlike the OAuth setup
+  itself. This capability was not what "full read+write" meant in the
+  three questions above - those were scoped to the Gmail API (send/delete/
+  modify email), not arbitrary local file access, so it was surfaced to
+  the user separately, as its own explicit question, rather than folded
+  into or assumed covered by the original read+write answer. **Decision:
+  ship as-is, risk knowingly accepted** - the user's call, made with the
+  concrete exploit chain in front of them. Revisit if this app ever gets
+  real, mutually-untrusted users, or if a fork/wrapper stripping
+  `attachments`/`download_attachment` becomes available. See the `gmail`
+  entry in `mcp-servers.yaml` for the same detail in context.
+
+The same pass caught `calendar` exposing two more tools upstream than
+what was documented/approved - `manage-accounts` (add/remove connected
+Google accounts, at odds with the single-shared-account design above) and
+`respond-to-event` (RSVPs to invitations as the shared account) - neither
+part of the three questions' scope. Fixed directly (a pure narrowing to
+what was already approved, not a new decision) via this server's
+`--enable-tools` whitelist flag, which `gmail` has no equivalent of - see
+the `calendar` entry in `mcp-servers.yaml`.
+
+Neither server has a live 3-trial accuracy table yet (the standard this
+file holds every new server to - see the `sqlite`/`duckduckgo` tables
+above) - both need a completed one-time OAuth setup on the host machine
+first (see the `gmail`/`calendar` entries in `mcp-servers.yaml` for the
+exact steps), which is not something this app's own process can do on the
+user's behalf. Run the same methodology once that's done - `fetch`,
+`get_current_time` with no timezone, plus an explicit "check my inbox for
+..." / "what's on my calendar..." prompt, 3 trials each, with and without
+`gmail`/`calendar` registered - and record it here before treating either
+as reliably selected.
+
 `ToolRegistry` itself is built exactly once, in `app/lifespan.py`, the
 same "construct once at the composition root" rule as every other service
 here ([architecture.md](architecture.md#dependency-injection)) - not a
