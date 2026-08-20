@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+### [1.0.1](https://github.com/matanew1/ai-agent-platform/compare/v1.0.0...v1.0.1) (2026-08-20)
+
+
+### Changed
+
+* **graph:** narrow the tool-routing prompt for explicit/inbox requests ([#30](https://github.com/matanew1/ai-agent-platform/issues/30)) ([312d8c2](https://github.com/matanew1/ai-agent-platform/commit/312d8c2308440f675341a35aaeb90a2ae7231e84))
+
 ## [1.0.0](https://github.com/matanew1/ai-agent-platform/compare/v0.16.0...v1.0.0) (2026-08-20)
 
 
