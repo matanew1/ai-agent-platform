@@ -12,6 +12,13 @@ Commits](https://www.conventionalcommits.org/) - so a commit's `feat:` /
 `feat:` bumps a patch, not a minor: pass `--release-as minor` when a
 release deserves one.
 
+## [1.0.0](https://github.com/matanew1/ai-agent-platform/compare/v0.16.0...v1.0.0) (2026-08-20)
+
+
+### Added
+
+* **tool:** add Gmail and Calendar MCP servers ([#29](https://github.com/matanew1/ai-agent-platform/issues/29)) ([427232b](https://github.com/matanew1/ai-agent-platform/commit/427232b4fa7fa0776ea80a05ff1d64100a361c90))
+
 ### [0.16.1](https://github.com/matanew1/ai-agent-platform/compare/v0.16.0...v0.16.1) (2026-08-20)
 
 ## [0.16.0](https://github.com/matanew1/ai-agent-platform/compare/v0.15.0...v0.16.0) (2026-08-20)
